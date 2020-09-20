@@ -9,6 +9,7 @@ enroute.zip
 org.alloytools.alloy.application/src/main/java/edu/mit/csail/sdg/alloy4compiler/parser/CompLexer.java
 org.alloytools.alloy.application/src/main/java/edu/mit/csail/sdg/alloy4compiler/parser/CompParser.java
 org.alloytools.alloy.application/src/main/java/edu/mit/csail/sdg/alloy4compiler/parser/CompSym.java
+org.alloytools.fortress.core/libs/
 *.slo
 *.lo
 *.o

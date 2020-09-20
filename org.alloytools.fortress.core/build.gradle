@@ -1,0 +1,8 @@
+task('copyJarFiles', type: Copy) {
+    dependsOn(':org.alloytools.fortress.core:fortress:distTar')
+
+    from(tarTree(file('fortress/build/distributions/fortress.tar')))
+    into(file('libs'))
+}
+
+compileJava.dependsOn('copyJarFiles')

@@ -1,0 +1,15 @@
+-classpath: \
+	libs/fortress/antlr4-4.7.2.jar,\
+	libs/fortress/antlr4-runtime-4.7.2.jar,\
+	libs/fortress/fortress.jar,\
+	libs/fortress/icu4j-61.1.jar,\
+	libs/fortress/javax.json-1.0.4.jar,\
+	libs/fortress/org.abego.treelayout.core-1.0.3.jar,\
+	libs/fortress/scala-library-2.13.1.jar,\
+	libs/fortress/ST4-4.1.jar
+
+Bundle-SymbolicName: org.alloytools.fortress.core
+ver: 2.0
+-output: ${bsn}-${ver}.jar
+Bundle-Version: ${ver}
+Export-Package: *;version=${ver}
