@@ -67,6 +67,7 @@ import edu.mit.csail.sdg.ast.Sig.PrimSig;
 import edu.mit.csail.sdg.ast.Type;
 import edu.mit.csail.sdg.translator.A4Options.SatSolver;
 import fortress.modelfind.ModelFinder;
+import fortress.msfol.Sort;
 import fortress.msfol.Theory;
 import kodkod.ast.BinaryExpression;
 import kodkod.ast.BinaryFormula;
@@ -270,6 +271,11 @@ public final class A4Solution {
     /** The Fortress Theory object. */
     private Theory                            theory;
 
+    /**
+     * The map from each top-level Sig to its scope in Fortress
+     */
+    private Map<Sort, Integer>              sortScopes;
+
     // ===================================================================================================//
 
     /**
@@ -297,6 +303,7 @@ public final class A4Solution {
         this.k2pos = new LinkedHashMap<Formula,Object>();
         this.rel2type = new LinkedHashMap<Relation,Type>();
         this.decl2type = new LinkedHashMap<Variable,Pair<Type,Pos>>();
+        this.sortScopes = new LinkedHashMap<>();
         this.originalOptions = opt;
         this.originalCommand = (originalCommand == null ? "" : originalCommand);
         this.bitwidth = bitwidth;
@@ -446,6 +453,7 @@ public final class A4Solution {
         k2pos = old.k2pos;
         rel2type = old.rel2type;
         decl2type = old.decl2type;
+        sortScopes = old.sortScopes;
         if (inst != null) {
             eval = new Evaluator(inst, old.solver.options());
             a2k = new LinkedHashMap<Expr,Expression>();
@@ -1433,7 +1441,7 @@ public final class A4Solution {
         if (opt.solver.equals(SatSolver.Fortress)) {
             File tmpCNF = File.createTempFile("tmp", ".java", new File(opt.tempDirectory));
             String out = tmpCNF.getAbsolutePath();
-            // TODO: Add code here!
+            Util.writeAll(out, TranslateFortressToJava.convert(theory, sortScopes));
             rep.resultCNF(out);
             return null;
         }
