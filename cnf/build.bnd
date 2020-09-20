@@ -8,7 +8,7 @@ testsrc:      			src/test/java
 testbin:      			target/test-classes
 target-dir:   			target
 
-javac.source:           1.8
+javac.source:           1.11
 javac.target:           ${javac.source}
 javac.compliance:       ${javac.source}
 javac.debug:            on

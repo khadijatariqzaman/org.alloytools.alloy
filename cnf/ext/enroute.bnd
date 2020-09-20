@@ -5,9 +5,9 @@
 #
 
 
-javac.source: 			1.8
-javac.target: 			1.8
--runee:					JavaSE-1.8
+javac.source: 			1.11
+javac.target: 			1.11
+-runee:					JavaSE-1.11
 
 -dsannotations: 		*
 -metatypeannotations:	*
