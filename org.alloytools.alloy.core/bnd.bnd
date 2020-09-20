@@ -10,6 +10,7 @@
 	org.alloytools.kodkod.nativesat.x86-linux;version=latest,\
 	org.alloytools.kodkod.nativesat.x86-mac;version=latest,\
 	org.alloytools.kodkod.nativesat.x86-windows;version=latest, \
+	org.alloytools.fortress.core;version=latest, \
 	org.eclipse.jdt.annotation
 
 -testpath: \

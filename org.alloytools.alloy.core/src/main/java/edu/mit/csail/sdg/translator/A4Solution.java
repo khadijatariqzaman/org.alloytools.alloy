@@ -66,6 +66,8 @@ import edu.mit.csail.sdg.ast.Sig.Field;
 import edu.mit.csail.sdg.ast.Sig.PrimSig;
 import edu.mit.csail.sdg.ast.Type;
 import edu.mit.csail.sdg.translator.A4Options.SatSolver;
+import fortress.modelfind.ModelFinder;
+import fortress.msfol.Theory;
 import kodkod.ast.BinaryExpression;
 import kodkod.ast.BinaryFormula;
 import kodkod.ast.Decl;
@@ -185,6 +187,9 @@ public final class A4Solution {
     /** The Kodkod Solver object. */
     private final Solver            solver;
 
+    /** The Fortress ModelFinder object. */
+    private final ModelFinder       finder;
+
     // ====== mutable fields (immutable after solve() has been called)
     // ===================================//
 
@@ -261,6 +266,9 @@ public final class A4Solution {
      * The map from each Kodkod Variable to an Alloy Type and Alloy Pos.
      */
     private Map<Variable,Pair<Type,Pos>>      decl2type;
+
+    /** The Fortress Theory object. */
+    private Theory                            theory;
 
     // ===================================================================================================//
 
@@ -402,6 +410,8 @@ public final class A4Solution {
         solver.options().setSkolemDepth(opt.skolemDepth);
         solver.options().setBitwidth(bitwidth > 0 ? bitwidth : (int) Math.ceil(Math.log(atoms.size())) + 1);
         solver.options().setIntEncoding(Options.IntEncoding.TWOSCOMPLEMENT);
+        finder = ModelFinder.createDefault();
+        theory = Theory.empty();
     }
 
     /**
@@ -427,6 +437,8 @@ public final class A4Solution {
         seqidxBounds = old.seqidxBounds;
         stringBounds = old.stringBounds;
         solver = old.solver;
+        finder = old.finder;
+        theory = old.theory;
         bounds = old.bounds;
         formulas = old.formulas;
         sigs = old.sigs;
@@ -1418,7 +1430,19 @@ public final class A4Solution {
             rep.resultCNF(out);
             return null;
         }
-        if (!solver.options().solver().incremental() /*
+        if (opt.solver.equals(SatSolver.Fortress)) {
+            File tmpCNF = File.createTempFile("tmp", ".java", new File(opt.tempDirectory));
+            String out = tmpCNF.getAbsolutePath();
+            // TODO: Add code here!
+            rep.resultCNF(out);
+            return null;
+        }
+        if (opt.solver.equals(SatSolver.Z3)) {
+            // TODO: Add code here!
+            finder.setTheory(theory);
+            finder.checkSat();
+            return null;
+        } else if (!solver.options().solver().incremental() /*
                                                       * || solver.options().solver()==SATFactory. ZChaffMincost
                                                       */) {
             if (sol == null)
