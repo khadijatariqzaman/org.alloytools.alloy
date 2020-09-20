@@ -398,6 +398,13 @@ public class PreferencesDialog extends JFrame {
                 boolean enableCore = Solver.get() == SatSolver.MiniSatProverJNI;
                 pref2comp.get(CoreGranularity).setEnabled(enableCore);
                 pref2comp.get(CoreMinimization).setEnabled(enableCore);
+                boolean enableOptions = !(Solver.get() == SatSolver.Z3 || Solver.get() == SatSolver.Fortress);
+                pref2comp.get(SkolemDepth).setEnabled(enableOptions);
+                pref2comp.get(Unrolls).setEnabled(enableOptions);
+                pref2comp.get(NoOverflow).setEnabled(enableOptions);
+                pref2comp.get(ImplicitThis).setEnabled(enableOptions);
+                pref2comp.get(InferPartialInstance).setEnabled(enableOptions);
+                pref2comp.get(RecordKodkod).setEnabled(enableOptions);
             }
         });
 

@@ -183,11 +183,14 @@ public final class A4Options implements Serializable {
         public static final SatSolver CryptoMiniSatJNI = new SatSolver("cryptominisat(jni)", "CryptoMiniSat", null, null, true);
         /** SAT4J using native Java */
         public static final SatSolver SAT4J            = new SatSolver("sat4j", "SAT4J", null, null, true);
+        /** Z3 */
+        public static final SatSolver Z3            = new SatSolver("z3", "Z3", null,null, true);
         /** Outputs the raw CNF file only */
         public static final SatSolver CNF              = new SatSolver("cnf", "Output CNF to file", null, null, true);
         /** Outputs the raw Kodkod file only */
         public static final SatSolver KK               = new SatSolver("kodkod", "Output Kodkod to file", null, null, true);
-
+         /** Outputs the raw Fortress file only */
+        public static final SatSolver Fortress         = new SatSolver("fortress", "Output Fortress to file", null, null, true);
     }
 
     /** This ensures the class can be serialized reliably. */
@@ -287,12 +290,18 @@ public final class A4Options implements Serializable {
      */
     public int       unrolls              = (-1);
 
+    /**
+     * This option specifies the time limit on solving for Fortress
+     */
+    public int fortressTimeLimit = 1000;
+
     /** This method makes a copy of this Options object. */
     public A4Options dup() {
         A4Options x = new A4Options();
         x.inferPartialInstance = inferPartialInstance;
         x.unrolls = unrolls;
         x.symmetry = symmetry;
+        x.fortressTimeLimit = fortressTimeLimit;
         x.skolemDepth = skolemDepth;
         x.coreMinimization = coreMinimization;
         x.solver = solver;

@@ -296,6 +296,11 @@ public final class SimpleGUI implements ComponentListener, Listener {
     private int                   subStackNow            = 0;
 
     /**
+     * The time limit for solving if the solver is Z3
+     */
+    private int fortressTimeLimit = 1000;
+
+    /**
      * The list of commands (this field will be cleared to null when the text buffer
      * is edited).
      */
@@ -1183,6 +1188,7 @@ public final class SimpleGUI implements ComponentListener, Listener {
         opt.coreGranularity = CoreGranularity.get();
         opt.originalFilename = Util.canon(text.get().getFilename());
         opt.solver = Solver.get();
+        opt.fortressTimeLimit = fortressTimeLimit;
         task.bundleIndex = i;
         task.bundleWarningNonFatal = WarningNonfatal.get();
         task.map = text.takeSnapshot();
@@ -1426,17 +1432,30 @@ public final class SimpleGUI implements ComponentListener, Listener {
             optmenu.addSeparator();
 
             addToMenu(optmenu, Solver);
-            addToMenu(optmenu, SkolemDepth);
+            JMenu sMenu = addToMenu(optmenu, SkolemDepth);
+            sMenu.setEnabled(!(Solver.get() == SatSolver.Z3 || Solver.get() == SatSolver.Fortress));
             JMenu cmMenu = addToMenu(optmenu, CoreMinimization);
             cmMenu.setEnabled(Solver.get() == SatSolver.MiniSatProverJNI);
             JMenu cgMenu = addToMenu(optmenu, CoreGranularity);
             cgMenu.setEnabled(Solver.get() == SatSolver.MiniSatProverJNI);
 
-            addToMenu(optmenu, AutoVisualize, RecordKodkod);
+            if (Solver.get() == SatSolver.Z3 || Solver.get() == SatSolver.Fortress) {
+                menuItem(optmenu, "Visualize automatically", false);
+                menuItem(optmenu, "Record the Kodkod input/output", false);
+            } else {
+                addToMenu(optmenu, AutoVisualize, RecordKodkod);
+            }
 
             if (Version.experimental) {
-                addToMenu(optmenu, Unrolls);
-                addToMenu(optmenu, ImplicitThis, NoOverflow, InferPartialInstance);
+                JMenu uMenu = addToMenu(optmenu, Unrolls);
+                uMenu.setEnabled(!(Solver.get() == SatSolver.Z3 || Solver.get() == SatSolver.Fortress));
+                if (Solver.get() == SatSolver.Z3 || Solver.get() == SatSolver.Fortress) {
+                    menuItem(optmenu, "Enable 'implicit this' name resolution", false);
+                    menuItem(optmenu, "Prevent overflows", false);
+                    menuItem(optmenu, "Infer partial instance", false);
+                } else {
+                    addToMenu(optmenu, ImplicitThis, NoOverflow, InferPartialInstance);
+                }
             }
 
         } finally {
@@ -1490,6 +1509,35 @@ public final class SimpleGUI implements ComponentListener, Listener {
             text.enableSyntax(!SyntaxDisabled.get());
         }
         return wrapMe();
+    }
+
+    /**
+     * This method prompts the user for their choice of setting if they select Z3 as a solver
+     * This includes a time limit option.
+     */
+    private Runner doAskFortressOptions() {
+        if (wrap)
+            return wrapMe();
+
+        if (Solver.get().equals(SatSolver.Z3)) {
+            String timeLimitInput = "";
+
+            JTextField textField = OurUtil.textfield(timeLimitInput, 10);
+            textField.selectAll();
+
+            if (!OurDialog.getInput(frame, "Fortress options", "Time limit", textField)) {
+                return null;
+            }
+            if (textField.getText().length() > 0) {
+                try {
+                    Integer.parseInt(textField.getText());
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            }
+        }
+
+        return null;
     }
 
     // ===============================================================================================================//
@@ -2250,6 +2298,7 @@ public final class SimpleGUI implements ComponentListener, Listener {
             prefDialog.addChangeListener(wrapToChangeListener(doOptAntiAlias()), AntiAlias);
             prefDialog.addChangeListener(wrapToChangeListener(doOptSyntaxHighlighting()), SyntaxDisabled);
             prefDialog.addChangeListener(wrapToChangeListener(doLookAndFeel()), LAF);
+            prefDialog.addChangeListener(wrapToChangeListener(doAskFortressOptions()), Solver);
         } finally {
             wrap = false;
         }
