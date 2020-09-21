@@ -42,7 +42,7 @@ public final class Statistics {
     /**
      * Constructs a new Statistics object using the provided values.
      */
-    Statistics(int primaryVariables, int variables, int clauses, long translationTime, long solvingTime) {
+    public Statistics(int primaryVariables, int variables, int clauses, long translationTime, long solvingTime) {
         this.pVars = primaryVariables;
         this.vars = variables;
         this.clauses = clauses;

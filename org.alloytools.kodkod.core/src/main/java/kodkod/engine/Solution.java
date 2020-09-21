@@ -79,7 +79,7 @@ public final class Solution {
      * @return {s: Solution | s.outcome() = UNSATISFIABLE && s.stats() = stats &&
      *         s.proof() = proof }
      */
-    static Solution unsatisfiable(Statistics stats, Proof proof) {
+    public static Solution unsatisfiable(Statistics stats, Proof proof) {
         return new Solution(Outcome.UNSATISFIABLE, stats, null, proof);
     }
 

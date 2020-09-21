@@ -101,6 +101,8 @@ public final class TranslateAlloyToKodkod extends VisitReturn<Object> {
      */
     private final A4Solution                  frame;
 
+    private final ScopeComputer               sc;
+
     /**
      * If frame==null, it stores the mapping from each Sig/Field/Skolem/Atom to its
      * corresponding Kodkod expression.
@@ -147,6 +149,7 @@ public final class TranslateAlloyToKodkod extends VisitReturn<Object> {
         this.cmd = cmd;
         Pair<A4Solution,ScopeComputer> pair = ScopeComputer.compute(this.rep, opt, sigs, cmd);
         this.frame = pair.a;
+        this.sc = pair.b;
         this.bitwidth = pair.a.getBitwidth();
         this.min = pair.a.min();
         this.max = pair.a.max();
@@ -172,6 +175,7 @@ public final class TranslateAlloyToKodkod extends VisitReturn<Object> {
         this.rep = A4Reporter.NOP;
         this.cmd = null;
         this.frame = null;
+        this.sc = null;
         this.bitwidth = bitwidth;
         this.max = Util.max(bitwidth);
         this.min = Util.min(bitwidth);
@@ -534,6 +538,7 @@ public final class TranslateAlloyToKodkod extends VisitReturn<Object> {
                 return execute_greedyCommand(rep, sigs, cmd, opt);
             tr = new TranslateAlloyToKodkod(rep, opt, sigs, cmd);
             tr.makeFacts(cmd.formula);
+            TranslateAlloyToFortress.translate(tr.frame, tr.sc, rep, opt, sigs, cmd);
             return tr.frame.solve(rep, cmd, new Simplifier(), false);
         } catch (UnsatisfiedLinkError ex) {
             throw new ErrorFatal("The required JNI library cannot be found: " + ex.toString().trim(), ex);
@@ -580,6 +585,7 @@ public final class TranslateAlloyToKodkod extends VisitReturn<Object> {
                 return execute_greedyCommand(rep, sigs, cmd, opt);
             tr = new TranslateAlloyToKodkod(rep, opt, sigs, cmd);
             tr.makeFacts(cmd.formula);
+            TranslateAlloyToFortress.translate(tr.frame, tr.sc, rep, opt, sigs, cmd);
             return tr.frame.solve(rep, cmd, new Simplifier(), true);
         } catch (UnsatisfiedLinkError ex) {
             throw new ErrorFatal("The required JNI library cannot be found: " + ex.toString().trim(), ex);
