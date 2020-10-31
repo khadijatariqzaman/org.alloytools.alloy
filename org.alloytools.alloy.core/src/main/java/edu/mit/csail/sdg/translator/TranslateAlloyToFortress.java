@@ -110,7 +110,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         this.rep = (rep != null) ? rep : A4Reporter.NOP;
         this.cmd = cmd;
         this.frame = sol;
-        this.nameGenerator = TheoryComputer.compute(rep, frame, sigs, sc);
+        this.nameGenerator = TheoryComputer.compute(rep, frame, sigs, sc, opt);
     }
 
     /**
@@ -687,8 +687,14 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         FuncDecl func = frame.a2f(x);
         if (func == null)
             throw new ErrorFatal(x.pos, "Sig \"" + x + "\" is not bound to a legal value during translation.\n");
-        if (envVars.has(x))
+        if (envVars.has(x)) {
+            if (func.resultSort() != Sort.Bool()) {
+                List<Var> vars = new ArrayList<>(envVars.get(x));
+                Var v = vars.remove(vars.size() - 1);
+                return Term.mkEq(Term.mkApp(func.name(), vars), v);
+            }
             return Term.mkApp(func.name(), envVars.get(x));
+        }
         return func;
     }
 

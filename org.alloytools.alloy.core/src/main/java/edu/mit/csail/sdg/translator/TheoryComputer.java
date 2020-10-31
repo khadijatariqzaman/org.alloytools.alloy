@@ -20,6 +20,9 @@ import java.util.List;
 import scala.collection.JavaConverters;
 
 import edu.mit.csail.sdg.alloy4.A4Reporter;
+import edu.mit.csail.sdg.ast.Expr;
+import edu.mit.csail.sdg.ast.ExprBinary;
+import edu.mit.csail.sdg.ast.ExprUnary;
 import edu.mit.csail.sdg.ast.Sig;
 import edu.mit.csail.sdg.ast.Sig.Field;
 import edu.mit.csail.sdg.ast.Sig.PrimSig;
@@ -151,7 +154,7 @@ final class TheoryComputer {
      * Computes the theory for sigs/fields, then construct a TheoryComputer object
      * that you can query.
      */
-    private TheoryComputer(A4Reporter rep, A4Solution sol, Iterable<Sig> sigs, ScopeComputer sc) {
+    private TheoryComputer(A4Reporter rep, A4Solution sol, Iterable<Sig> sigs, ScopeComputer sc, A4Options opt) {
         this.rep = rep;
         this.sol = sol;
         this.sc = sc;
@@ -169,21 +172,47 @@ final class TheoryComputer {
                 List<Sort> args = new ArrayList<>(t.arity());
                 List<Var> vars = new ArrayList<>(t.arity());
                 List<AnnotatedVar> avars = new ArrayList<>(t.arity());
-                Term sum = null;
+                List<Term> sum = new ArrayList<>(t.arity());
                 for (PrimSig p : t.fold().get(0)) {
                     Sort sort = JavaConverters.asJavaIterable(sol.a2f(p).argSorts()).iterator().next();
                     args.add(sort);
                     Var v = Term.mkVar(nameGenerator.freshName("var"));
                     vars.add(v);
                     avars.add(v.of(sort));
-                    if (sum == null)
-                        sum = Term.mkApp(p.label, v);
-                    else
-                        sum = Term.mkAnd(sum, Term.mkApp(p.label, v));
+                    sum.add(Term.mkApp(p.label, v));
                 }
-                FuncDecl func = sol.addFuncDecl(s.label + "." + f.label, args, Sort.Bool());
-                sol.addField(f, func);
-                sol.addAxiom(Term.mkForall(avars, Term.mkImp(Term.mkApp(s.label + "." + f.label, vars), sum)));
+                boolean isFunc = false;
+                if (opt.useFunctions) {
+                    Expr expr = f.decl().expr, prev = expr;
+                    while (expr instanceof ExprBinary && expr.mult != 0 && ((ExprBinary) expr).op.isArrow) {
+                        prev = expr;
+                        expr = ((ExprBinary) expr).right;
+                    }
+                    if (prev.mult == 1) {
+                        if (((ExprUnary) prev).op == ExprUnary.Op.ONEOF)
+                            isFunc = true;
+                    } else if (prev.mult == 2) {
+                        switch (((ExprBinary) prev).op) {
+                            case ANY_ARROW_ONE :
+                            case SOME_ARROW_ONE :
+                            case ONE_ARROW_ONE :
+                            case LONE_ARROW_ONE :
+                                isFunc = true;
+                        }
+                    }
+                    if (isFunc) {
+                        Sort returnType = args.remove(args.size() - 1);
+                        Var returnVar = vars.remove(vars.size() - 1);
+                        FuncDecl func = sol.addFuncDecl(s.label + "." + f.label, args, returnType);
+                        sol.addField(f, func);
+                        sol.addAxiom(Term.mkForall(avars, Term.mkImp(Term.mkEq(Term.mkApp(s.label + "." + f.label, vars), returnVar), Term.mkAnd(sum))));
+                    }
+                }
+                if (!opt.useFunctions || !isFunc) {
+                    FuncDecl func = sol.addFuncDecl(s.label + "." + f.label, args, Sort.Bool());
+                    sol.addField(f, func);
+                    sol.addAxiom(Term.mkForall(avars, Term.mkImp(Term.mkApp(s.label + "." + f.label, vars), Term.mkAnd(sum))));
+                }
             }
         }
         // TODO: Add any additional SIZE constraints
@@ -195,8 +224,8 @@ final class TheoryComputer {
      * Assign each sig and field to some Kodkod relation or expression, then set the
      * bounds.
      */
-    static NameGenerator compute(A4Reporter rep, A4Solution sol, Iterable<Sig> sigs, ScopeComputer sc) {
-        TheoryComputer tc = new TheoryComputer(rep, sol, sigs, sc);
+    static NameGenerator compute(A4Reporter rep, A4Solution sol, Iterable<Sig> sigs, ScopeComputer sc, A4Options opt) {
+        TheoryComputer tc = new TheoryComputer(rep, sol, sigs, sc, opt);
         return tc.getNameGenerator();
     }
 }

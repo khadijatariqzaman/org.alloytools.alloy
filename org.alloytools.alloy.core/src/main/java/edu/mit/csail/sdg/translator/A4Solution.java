@@ -67,8 +67,7 @@ import edu.mit.csail.sdg.ast.Sig.PrimSig;
 import edu.mit.csail.sdg.ast.Type;
 import edu.mit.csail.sdg.translator.A4Options.SatSolver;
 import fortress.interpretation.Interpretation;
-import fortress.modelfind.ModelFinder;
-import fortress.modelfind.ModelFinderResult;
+import fortress.modelfind.*;
 import fortress.msfol.AnnotatedVar;
 import fortress.msfol.FuncDecl;
 import fortress.msfol.Sort;
@@ -437,7 +436,23 @@ public final class A4Solution {
         solver.options().setSkolemDepth(opt.skolemDepth);
         solver.options().setBitwidth(bitwidth > 0 ? bitwidth : (int) Math.ceil(Math.log(atoms.size())) + 1);
         solver.options().setIntEncoding(Options.IntEncoding.TWOSCOMPLEMENT);
-        finder = ModelFinder.createDefault();
+        switch(opt.fortressModelFinder) {
+            case 0:
+                finder = new FortressTHREE_SI();
+                break;
+            case 1:
+                finder = new FortressTHREE();
+                break;
+            case 2:
+                finder = new FortressTWO_SI();
+                break;
+            case 3:
+                finder = new FortressTWO();
+                break;
+            default:
+                finder = new FortressONE();
+                break;
+        }
         theory = Theory.empty();
     }
 
@@ -873,8 +888,6 @@ public final class A4Solution {
     void addField(Field f, FuncDecl func) throws ErrorFatal {
         if (solved)
             throw new ErrorFatal("Cannot add an additional field since solve() has completed.");
-        if (func.arity() != f.type().arity())
-            throw new ErrorFatal("Field " + f + " must be associated with an " + f.type().arity() + "-ary relational value.");
         a2f.put(f, func);
     }
 
@@ -1650,15 +1663,13 @@ public final class A4Solution {
             Util.writeAll(out, sol.instance() != null ? "p cnf 1 1\n1 0\n" : "p cnf 1 2\n1 0\n-1 0\n");
             rep.resultCNF(out);
             return null;
-        }
-        if (opt.solver.equals(SatSolver.Fortress)) {
+        } else if (opt.solver.equals(SatSolver.Fortress)) {
             File tmpCNF = File.createTempFile("tmp", ".java", new File(opt.tempDirectory));
             String out = tmpCNF.getAbsolutePath();
             Util.writeAll(out, TranslateFortressToJava.convert(theory, sortScopes));
             rep.resultCNF(out);
             return null;
-        }
-        if (opt.solver.equals(SatSolver.Z3)) {
+        } else if (opt.solver.equals(SatSolver.Z3)) {
             finder.setTheory(theory);
             sol = getSolution(finder.checkSat());
         } else if (!solver.options().solver().incremental() /*

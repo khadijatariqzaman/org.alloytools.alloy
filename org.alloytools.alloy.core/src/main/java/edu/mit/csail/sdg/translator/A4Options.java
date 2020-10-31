@@ -295,6 +295,10 @@ public final class A4Options implements Serializable {
      */
     public int fortressTimeLimit = 1000;
 
+    public int fortressModelFinder = 1;
+
+    public boolean useFunctions = true;
+
     /** This method makes a copy of this Options object. */
     public A4Options dup() {
         A4Options x = new A4Options();
@@ -302,6 +306,8 @@ public final class A4Options implements Serializable {
         x.unrolls = unrolls;
         x.symmetry = symmetry;
         x.fortressTimeLimit = fortressTimeLimit;
+        x.fortressModelFinder = fortressModelFinder;
+        x.useFunctions = useFunctions;
         x.skolemDepth = skolemDepth;
         x.coreMinimization = coreMinimization;
         x.solver = solver;
