@@ -63,6 +63,8 @@ final class TheoryComputer {
      */
     private final Bounds            bounds;
 
+    private final A4Options         opt;
+
     /** Keeps track of all sort/function/var names */
     private final NameGenerator nameGenerator;
 
@@ -75,7 +77,7 @@ final class TheoryComputer {
     // ==============================================================================================================//
 
     private void allocatePrimSig(PrimSig sig) {
-        String sortName = "sort"+sig.label;
+        String sortName = "_"+sig.label;
         nameGenerator.forbidName(sortName);
         Sort sort = sol.addSort(sortName, sc.sig2scope(sig));
         // Recursively add all functions, and form the union of them
@@ -83,8 +85,14 @@ final class TheoryComputer {
         FuncDecl func = sol.addFuncDecl(sig.label, List.of(sort), Sort.Bool());
         sol.addSig(sig, func);
         if (sc.isExact(sig)) {
-            Var v = Term.mkVar(nameGenerator.freshName("var"));
-            sol.addAxiom(Term.mkForall(v.of(sort), Term.mkTop()));
+            if (opt.useScalars && sc.sig2scope(sig) == 1) {
+                Var c = Term.mkVar("c"+sig.label);
+                sol.addConstant(sig, c.of(sort));
+                sol.addAxiom(Term.mkApp(sig.label, c));
+            } else {
+                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                sol.addAxiom(Term.mkForall(v.of(sort), Term.mkApp(sig.label, v)));
+            }
         }
         allocateSubsetSig(sig, sort);
     }
@@ -94,22 +102,32 @@ final class TheoryComputer {
         Term sum = null;
         for (PrimSig child : sig.children()) {
             nameGenerator.forbidName(child.label);
-            FuncDecl func = sol.addFuncDecl(child.label, List.of(sort), Sort.Bool());
-            sol.addSig(child, func);
-            if (sc.isExact(child))
-                sol.addAxiom(exactlyN(func, sc.sig2scope(child)));
+            boolean check = false;
+            if (opt.useScalars && sc.isExact(child) && sc.sig2scope(child) == 1) {
+                Var c = Term.mkVar(child.label);
+                sol.addConstant(child, c.of(sort));
+                check = true;
+            } else {
+                FuncDecl func = sol.addFuncDecl(child.label, List.of(sort), Sort.Bool());
+                sol.addSig(child, func);
+                if (sc.isExact(child))
+                    sol.addAxiom(exactlyN(func, sc.sig2scope(child)));
+                if (sc.sig2scope(sig) != sc.sig2scope(child) && !sc.isExact(child))
+                    sol.addAxiom(atMostN(func, sc.sig2scope(sig)));
+            }
             allocateSubsetSig(child, sort);
-            sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(child.label, v), Term.mkApp(sig.label, v))));
+            if (check)
+                sol.addAxiom(Term.mkApp(sig.label, sol.a2c(child)));
+            else
+                sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(child.label, v), Term.mkApp(sig.label, v))));
             if (sum == null) {
-                sum = Term.mkApp(child.label, v);
+                sum = check ? Term.mkEq(v, sol.a2c(child)) : Term.mkApp(child.label, v);
                 continue;
             }
-            Term childTerm = Term.mkApp(child.label, v);
+            Term childTerm = check ? Term.mkEq(v, sol.a2c(child)) : Term.mkApp(child.label, v);
             // subsigs are disjoint
             sol.addAxiom(Term.mkForall(v.of(sort), Term.mkNot(Term.mkAnd(sum, childTerm))));
             sum = Term.mkOr(sum, childTerm);
-            if (sc.sig2scope(sig) != sc.sig2scope(child) && !sc.isExact(child))
-                sol.addAxiom(atMostN(func, sc.sig2scope(sig)));
         }
         if (sig.isAbstract != null && sum != null)
             sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(sig.label, v), sum)));
@@ -164,6 +182,7 @@ final class TheoryComputer {
         this.rep = rep;
         this.sol = sol;
         this.sc = sc;
+        this.opt = opt;
         this.bounds = sol.getBounds();
         this.nameGenerator = new IntSuffixNameGenerator(scala.collection.immutable.Set$.MODULE$.<String>empty(), 0);
         // Bound the sigs

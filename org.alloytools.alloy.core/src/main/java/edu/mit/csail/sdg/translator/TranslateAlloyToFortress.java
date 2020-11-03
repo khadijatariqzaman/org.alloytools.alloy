@@ -76,8 +76,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     /** The current reporter. */
     private A4Reporter                        rep;
 
-    /** The maximum allowed loop unrolling and recursion. */
-    private final int                         unrolls;
+    private final A4Options                   opt;
 
     /** If nonnull, it's the current command. */
     private final Command                     cmd;
@@ -106,7 +105,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
      * @param cmd - the command to solve (must not be null)
      */
     private TranslateAlloyToFortress(A4Solution sol, ScopeComputer sc, A4Reporter rep, A4Options opt, Iterable<Sig> sigs, Command cmd) throws Err {
-        this.unrolls = opt.unrolls;
+        this.opt = opt;
         this.rep = (rep != null) ? rep : A4Reporter.NOP;
         this.cmd = cmd;
         this.frame = sol;
@@ -123,8 +122,23 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 for (ExprHasName n : d.names) {
                     Field f = (Field) n;
                     Expr form = s.decl.get().join(f).in(d.expr);
-                    form = s.isOne == null ? form.forAll(s.decl) : ExprLet.make(null, (ExprVar) (s.decl.get()), s, form);
-                    frame.addAxiom(cterm(form));
+                    if (s.isOne != null)
+                        throw new RuntimeException("Not implemented yet!");
+                    // form = s.isOne == null ? form.forAll(s.decl) : ExprLet.make(null, (ExprVar) (s.decl.get()), s, form);
+                    final Expr dexexpr = addOne(s.decl.expr);
+                    Sort sort = getSorts(dexexpr).get(0);
+                    ExprHasName dex = s.decl.names.get(0);
+                    String label = skolem(dex.label);
+                    final Var v = Term.mkVar(nameGenerator.freshName(label));
+                    env.put((ExprVar) dex, v);
+                    envVars.put(dexexpr, List.of(v));
+                    Term tmp = cterm(dexexpr);
+                    envVars.remove(dexexpr);
+                    frame.addDecl(v.of(sort), new Pair<String, Type>(label, dexexpr.type()));
+                    Term t = isIn(s.decl.get().join(f), d.expr, true);
+                    if (t != Term.mkTop())
+                        frame.addAxiom(getQtTerm(false, List.of(v.of(sort)), List.of(tmp), t));
+                    env.remove((ExprVar) dex);
                 }
                 if (s.isOne == null && d.disjoint2 != null)
                     throw new RuntimeException("Not implemented yet!");
@@ -706,8 +720,12 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     @Override
     public Object visit(Sig x) throws Err {
         FuncDecl func = frame.a2f(x);
-        if (func == null)
-            throw new ErrorFatal(x.pos, "Sig \"" + x + "\" is not bound to a legal value during translation.\n");
+        if (func == null) {
+            Var v = frame.a2c(x);
+            if (v == null)
+                throw new ErrorFatal(x.pos, "Sig \"" + x + "\" is not bound to a legal value during translation.\n");
+            return Term.mkEq(envVars.get(x).get(0), v);
+        }
         if (envVars.has(x))
             return Term.mkApp(func.name(), envVars.get(x));
         return func;
@@ -725,7 +743,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         if (body.type().arity() < 0 || body.type().arity() != f.returnDecl.type().arity())
             throw new ErrorType(body.span(), "Function return value not fully resolved.");
         final int n = f.count();
-        int maxRecursion = unrolls;
+        int maxRecursion = opt.unrolls;
         for (Func ff : current_function)
             if (ff == f) {
                 if (maxRecursion < 0) {
@@ -841,9 +859,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             case IMPLIES :
                 return Term.mkOr(Term.mkNot(cterm(a)), cterm(b));
             case IN :
-                return isIn(a, b);
+                return isIn(a, b, false);
             case NOT_IN : 
-                return Term.mkNot(isIn(a, b));
+                return Term.mkNot(isIn(a, b, false));
             case JOIN :
                 return join(x);
             case LT :
@@ -929,9 +947,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     /**
      * Helper method that translates the formula "a in b" into a Fortress term.
      */
-    private Term isIn(Expr left, Expr right) throws Err {
+    private Term isIn(Expr left, Expr right, boolean field) throws Err {
         if (right instanceof ExprBinary && right.mult != 0 && ((ExprBinary) right).op.isArrow) {
-            return isInBinary(left, (ExprBinary) right);
+            return isInBinary(left, (ExprBinary) right, field);
         }
         List<Var> vars = getVars(left.type().arity());
         envVars.put(left, vars);
@@ -944,6 +962,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 envVars.remove(right);
                 return Term.mkForall(getAnnotatedVars(vars, getSorts(left)), t);
             case ONEOF :
+                if (field && opt.useFunctions)
+                    return Term.mkTop();
                 t = Term.mkImp(cterm(left), cterm(right));
                 envVars.remove(left);
                 envVars.remove(right);
@@ -959,6 +979,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 envVars.remove(right);
                 return Term.mkAnd(some(left), Term.mkForall(getAnnotatedVars(vars, getSorts(left)), t));
             default :
+                if (field)
+                    return Term.mkTop();
                 t = Term.mkImp(cterm(left), cterm(right));
                 envVars.remove(left);
                 envVars.remove(right);
@@ -969,7 +991,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     /**
      * Helper method that translates the formula "r in (a ?->? b)" into a Fortress term
      */
-    private Term isInBinary(Expr r, ExprBinary ab) throws Err {
+    private Term isInBinary(Expr r, ExprBinary ab, boolean field) throws Err {
         Term t, t2;
         Expr a = r;
         List<Var> vars = getVars(ab.left.type().arity());
@@ -984,7 +1006,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             env.put(ev, vars.get(i));
             a = ev.join(a); 
         }
-        t = isIn(a, ab.right);
+        t = isIn(a, ab.right, field);
         switch (ab.op) {
             case ISSEQ_ARROW_LONE :
             case ANY_ARROW_LONE :
@@ -997,7 +1019,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             case SOME_ARROW_ONE :
             case ONE_ARROW_ONE :
             case LONE_ARROW_ONE :
-                t = Term.mkAnd(t, one(a));
+                if (!field || !opt.useFunctions)
+                    t = Term.mkAnd(t, one(a));
                 break;
             case ANY_ARROW_SOME :
             case SOME_ARROW_SOME :
@@ -1007,9 +1030,11 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 break;
         }
         List<Sort> sorts = getSorts(ab.left);
-        if (!(tmp instanceof App && sorts.size() == 1 && sorts.get(0).name().equals(((App) tmp).getFunctionName().split("/")[1])))
-            t = Term.mkImp(tmp, t);
-        t = Term.mkForall(getAnnotatedVars(vars, sorts), t);
+        if (t != Term.mkTop()) {
+            if (!(tmp instanceof App && sorts.size() == 1 && sorts.get(0).name().equals(((App) tmp).getFunctionName().split("/")[1])))
+                t = Term.mkImp(tmp, t);
+            t = Term.mkForall(getAnnotatedVars(vars, sorts), t);
+        }
         vars = getVars(ab.right.type().arity());
         envVars.put(ab.right, vars);
         tmp = cterm(ab.right);
@@ -1021,7 +1046,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             env.put(ev, vars.get(i));
             r = r.join(ev); 
         }
-        t2 = isIn(r, ab.left);
+        t2 = isIn(r, ab.left, field);
         switch (ab.op) {
             case LONE_ARROW_ANY :
             case LONE_ARROW_SOME :
@@ -1043,11 +1068,16 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 break;
         }
         sorts = getSorts(ab.right);
-        if (!(tmp instanceof App && sorts.size() == 1 && sorts.get(0).name().equals(((App) tmp).getFunctionName().split("/")[1])))
-            t2 = Term.mkImp(tmp, t2);
         for (ExprVar ev : evars)
             env.remove(ev);
-        return Term.mkAnd(Term.mkForall(getAnnotatedVars(vars, sorts), t2), t);
+        if (t2 != Term.mkTop()) {
+            if (!(tmp instanceof App && sorts.size() == 1 && sorts.get(0).name().equals(((App) tmp).getFunctionName().split("/")[1])))
+                t2 = Term.mkImp(tmp, t2);
+            if (t != Term.mkTop())
+                return Term.mkAnd(Term.mkForall(getAnnotatedVars(vars, sorts), t2), t);
+            return Term.mkForall(getAnnotatedVars(vars, sorts), t2);
+        }
+        return t;
     }
 
     private Object join(ExprBinary e) {

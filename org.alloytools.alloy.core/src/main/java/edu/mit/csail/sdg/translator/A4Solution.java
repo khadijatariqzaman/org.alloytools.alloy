@@ -74,6 +74,7 @@ import fortress.msfol.Sort;
 import fortress.msfol.Term;
 import fortress.msfol.Theory;
 import fortress.msfol.Value;
+import fortress.msfol.Var;
 import kodkod.ast.BinaryExpression;
 import kodkod.ast.BinaryFormula;
 import kodkod.ast.Decl;
@@ -286,6 +287,8 @@ public final class A4Solution {
      */
     private Map<Expr,FuncDecl>              a2f;
 
+    private Map<Expr,Var>              a2c;
+
     private Map<AnnotatedVar, Pair<String, Type>> declMapping;
 
     /**
@@ -322,6 +325,7 @@ public final class A4Solution {
         this.decl2type = new LinkedHashMap<Variable,Pair<Type,Pos>>();
         this.sortScopes = new LinkedHashMap<>();
         this.a2f = new LinkedHashMap<Expr, FuncDecl>();
+        this.a2c = new LinkedHashMap<Expr, Var>();
         this.declMapping = new LinkedHashMap<>();
         this.originalOptions = opt;
         this.originalCommand = (originalCommand == null ? "" : originalCommand);
@@ -489,6 +493,7 @@ public final class A4Solution {
         decl2type = old.decl2type;
         sortScopes = old.sortScopes;
         a2f = ConstMap.make(old.a2f);
+        a2c = ConstMap.make(old.a2c);
         declMapping = ConstMap.make(old.declMapping);
         a2k = new LinkedHashMap<Expr,Expression>();
         for (Map.Entry<Expr,Expression> e : old.a2k.entrySet())
@@ -515,6 +520,7 @@ public final class A4Solution {
         atom2name = ConstMap.make(atom2name);
         atom2sig = ConstMap.make(atom2sig);
         a2f = ConstMap.make(a2f);
+        a2c = ConstMap.make(a2c);
         sortScopes = ConstMap.make(sortScopes);
         declMapping = ConstMap.make(declMapping);
         solved = true;
@@ -885,6 +891,13 @@ public final class A4Solution {
         a2f.put(s, func);
     }
 
+    void addConstant(Sig s, AnnotatedVar av) throws ErrorFatal {
+        if (solved)
+            throw new ErrorFatal("Cannot add an additional constant since solve() has completed.");
+        theory = theory.withConstant(av);
+        a2c.put(s, av.variable());
+    }
+
     void addField(Field f, FuncDecl func) throws ErrorFatal {
         if (solved)
             throw new ErrorFatal("Cannot add an additional field since solve() has completed.");
@@ -915,6 +928,10 @@ public final class A4Solution {
 
     FuncDecl a2f(Field field) {
         return a2f.get(field);
+    }
+
+    Var a2c(Sig sig) {
+        return a2c.get(sig);
     }
 
     Boolean hasFunctionWithName(String funcName) {
@@ -1670,6 +1687,7 @@ public final class A4Solution {
             rep.resultCNF(out);
             return null;
         } else if (opt.solver.equals(SatSolver.Z3)) {
+            rep.debug(theory.toString());
             finder.setTheory(theory);
             sol = getSolution(finder.checkSat());
         } else if (!solver.options().solver().incremental() /*
