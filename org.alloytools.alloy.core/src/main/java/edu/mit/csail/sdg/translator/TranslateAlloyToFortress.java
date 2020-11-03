@@ -54,6 +54,7 @@ import edu.mit.csail.sdg.ast.VisitReturn;
 import fortress.data.NameGenerator;
 import fortress.msfol.AnnotatedVar;
 import fortress.msfol.App;
+import fortress.msfol.Eq;
 import fortress.msfol.Forall;
 import fortress.msfol.FuncDecl;
 import fortress.msfol.Implication;
@@ -321,6 +322,12 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         }
     }
 
+    private static Term helperForall(List<AnnotatedVar> avars, Term t) {
+        if (avars.size() == 0)
+            return t;
+        return Term.mkForall(avars, t);
+    }
+
     private final class BoundVariableEliminator extends VisitReturn<Expr> {
 
         public List<ExprVar> boundVars;
@@ -547,6 +554,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         List<Var> vars = getVars(sorts.size());
         envVars.put(e, vars);
         Term t = cterm(e);
+        envVars.remove(e);
         List<Var> vars2 = getVars(sorts.size());
         envVars.put(e, vars2);
         t = Term.mkForall(getAnnotatedVars(vars2, sorts), Term.mkImp(cterm(e), Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkImp(t, compareVars(vars, vars2)))));
@@ -559,6 +567,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         List<Var> vars = getVars(sorts.size());
         envVars.put(e, vars);
         Term t = cterm(e);
+        envVars.remove(e);
         List<Var> vars2 = getVars(sorts.size());
         envVars.put(e, vars2);
         t = Term.mkAnd(Term.mkExists(getAnnotatedVars(vars, sorts), t), Term.mkForall(getAnnotatedVars(vars2, sorts), Term.mkImp(cterm(e), Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkImp(t, compareVars(vars, vars2))))));
@@ -952,40 +961,53 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             return isInBinary(left, (ExprBinary) right, field);
         }
         List<Var> vars = getVars(left.type().arity());
-        envVars.put(left, vars);
-        envVars.put(right, vars);
-        Term t;
+        List<AnnotatedVar> avars = new ArrayList<>(getAnnotatedVars(vars, getSorts(left)));
+        Term t = null;
         switch (right.mult()) {
             case EXACTLYOF :
-                t = Term.mkIff(cterm(left), cterm(right));
+                t = cterm(left);
+                Term r = cterm(right);
                 envVars.remove(left);
                 envVars.remove(right);
-                return Term.mkForall(getAnnotatedVars(vars, getSorts(left)), t);
+                if (t instanceof Eq && r instanceof Eq) {
+                    avars.remove(avars.size()-1);
+                    return helperForall(avars, Term.mkEq(((Eq) t).left(), ((Eq) r).left()));
+                }
+                return Term.mkForall(avars, Term.mkIff(t, r));
             case ONEOF :
                 if (field && opt.useFunctions)
                     return Term.mkTop();
-                t = Term.mkImp(cterm(left), cterm(right));
-                envVars.remove(left);
-                envVars.remove(right);
-                return Term.mkAnd(one(left), Term.mkForall(getAnnotatedVars(vars, getSorts(left)), t));
+                t = one(left);
+                break;
             case LONEOF :
-                t = Term.mkImp(cterm(left), cterm(right));
-                envVars.remove(left);
-                envVars.remove(right);
-                return Term.mkAnd(lone(left), Term.mkForall(getAnnotatedVars(vars, getSorts(left)), t));
+                t = lone(left);
+                break;
             case SOMEOF :
-                t = Term.mkImp(cterm(left), cterm(right));
-                envVars.remove(left);
-                envVars.remove(right);
-                return Term.mkAnd(some(left), Term.mkForall(getAnnotatedVars(vars, getSorts(left)), t));
+                t = some(left);
+                break;
             default :
                 if (field)
                     return Term.mkTop();
-                t = Term.mkImp(cterm(left), cterm(right));
-                envVars.remove(left);
-                envVars.remove(right);
-                return Term.mkForall(getAnnotatedVars(vars, getSorts(left)), t);
         }
+        envVars.put(left, vars);
+        envVars.put(right, vars);
+        Term l = cterm(left), r = cterm(right);
+        envVars.remove(left);
+        envVars.remove(right);
+        Term tmp = Term.mkForall(avars, Term.mkImp(l, r));
+        if (l instanceof Eq) {
+            if (r instanceof Eq) {
+                avars.remove(avars.size()-1);
+                tmp = helperForall(avars, Term.mkEq(((Eq) l).left(), ((Eq) r).left()));
+            } else if (r instanceof App) {
+                avars.remove(avars.size()-1);
+                App rApp = (App) r;
+                List<Term> args = new ArrayList<>(rApp.getArguments());
+                args.set(args.size()-1, ((Eq) l).left());
+                tmp = helperForall(avars, Term.mkApp(rApp.getFunctionName(), args));
+            }
+        }
+        return (t == null) ? tmp : Term.mkAnd(t, tmp);
     }
 
     /**
@@ -1110,6 +1132,15 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         Term l = cterm(a), r = cterm(b);
         envVars.remove(a);
         envVars.remove(b);
+        if (l instanceof Eq) {
+            if (r instanceof App) {
+                Eq lEq = (Eq) l; // left is App
+                App rApp = (App) r;
+                List<Term> args = new ArrayList<>(rApp.getArguments());
+                args.set(args.size()-1, lEq.left());
+                return Term.mkApp(rApp.getFunctionName(), args);
+            }
+        }
         return Term.mkExists(getAnnotatedVars(vars, List.of(getSorts(b).get(0))), Term.mkAnd(l, r));
     }
 
@@ -1136,6 +1167,10 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         Term l = cterm(a), r = cterm(b);
         envVars.remove(a);
         envVars.remove(b);
+        if (l instanceof Eq) {
+            if (r instanceof App)
+                return Term.mkApp(((App) r).getFunctionName(), ((Eq) l).left());
+        }
         return Term.mkExists(getAnnotatedVars(rVars, getSorts(b)), Term.mkAnd(l, r));
     }
 
@@ -1175,12 +1210,17 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             return equalsVar(b, a);
         List<Sort> sorts = getSorts(b);
         List<Var> vars = getVars(sorts.size());
+        List<AnnotatedVar> avars = new ArrayList<>(getAnnotatedVars(vars, sorts));
         envVars.put(a, vars);
         envVars.put(b, vars);
-        Term t = Term.mkIff(cterm(a), cterm(b));
+        Term l = cterm(a), r = cterm(b);
         envVars.remove(a);
         envVars.remove(b);
-        return Term.mkForall(getAnnotatedVars(vars, sorts), t);
+        if (l instanceof Eq && r instanceof Eq) {
+            avars.remove(avars.size()-1);
+            return helperForall(avars, Term.mkEq(((Eq) l).left(), ((Eq) r).left()));
+        }
+        return Term.mkForall(avars, Term.mkIff(l, r));
     }
 
     private Term plusplus(ExprBinary e) {
