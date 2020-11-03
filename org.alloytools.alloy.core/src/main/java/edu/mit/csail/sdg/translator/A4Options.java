@@ -297,7 +297,9 @@ public final class A4Options implements Serializable {
 
     public int fortressModelFinder = 1;
 
-    public boolean useFunctions = true;
+    public boolean useFunctions = false;
+
+    public boolean useScalars = false;
 
     /** This method makes a copy of this Options object. */
     public A4Options dup() {
@@ -308,6 +310,7 @@ public final class A4Options implements Serializable {
         x.fortressTimeLimit = fortressTimeLimit;
         x.fortressModelFinder = fortressModelFinder;
         x.useFunctions = useFunctions;
+        x.useScalars = useScalars;
         x.skolemDepth = skolemDepth;
         x.coreMinimization = coreMinimization;
         x.solver = solver;

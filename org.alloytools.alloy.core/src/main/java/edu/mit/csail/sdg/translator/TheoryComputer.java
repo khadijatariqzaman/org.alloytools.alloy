@@ -79,19 +79,26 @@ final class TheoryComputer {
         nameGenerator.forbidName(sortName);
         Sort sort = sol.addSort(sortName, sc.sig2scope(sig));
         // Recursively add all functions, and form the union of them
-        allocateSubsetSig(sig, sort);
-    }
-
-    private FuncDecl allocateSubsetSig(PrimSig sig, Sort sort) {
         nameGenerator.forbidName(sig.label);
         FuncDecl func = sol.addFuncDecl(sig.label, List.of(sort), Sort.Bool());
         sol.addSig(sig, func);
+        if (sc.isExact(sig)) {
+            Var v = Term.mkVar(nameGenerator.freshName("var"));
+            sol.addAxiom(Term.mkForall(v.of(sort), Term.mkTop()));
+        }
+        allocateSubsetSig(sig, sort);
+    }
+
+    private void allocateSubsetSig(PrimSig sig, Sort sort) {
         Var v = Term.mkVar(nameGenerator.freshName("var"));
-        if (sc.isExact(sig))
-            sol.addAxiom(exactlyN(func, sc.sig2scope(sig)));
         Term sum = null;
         for (PrimSig child : sig.children()) {
-            FuncDecl f = allocateSubsetSig(child, sort);
+            nameGenerator.forbidName(child.label);
+            FuncDecl func = sol.addFuncDecl(child.label, List.of(sort), Sort.Bool());
+            sol.addSig(child, func);
+            if (sc.isExact(child))
+                sol.addAxiom(exactlyN(func, sc.sig2scope(child)));
+            allocateSubsetSig(child, sort);
             sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(child.label, v), Term.mkApp(sig.label, v))));
             if (sum == null) {
                 sum = Term.mkApp(child.label, v);
@@ -106,7 +113,6 @@ final class TheoryComputer {
         }
         if (sig.isAbstract != null && sum != null)
             sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(sig.label, v), sum)));
-        return func;
     }
 
     private Term atMostN(FuncDecl f, int n) {
