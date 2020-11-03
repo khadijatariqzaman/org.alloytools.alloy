@@ -1100,19 +1100,17 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             envVars.remove(a);
             return t;
         }
-        int mutualTypes = (a.type().arity() + b.type().arity() - e.type().arity()) / 2;
-        vars.addAll(getVars(mutualTypes));
-        List<Var> lVars = new ArrayList(envVars.get(e).subList(0, a.type().arity() - mutualTypes));
+        vars.addAll(getVars(1));
+        List<Var> lVars = new ArrayList(envVars.get(e).subList(0, a.type().arity()-1));
         lVars.addAll(vars);
         List<Var> rVars = new ArrayList(vars);
-        Collections.reverse(rVars);
-        rVars.addAll(envVars.get(e).subList(a.type().arity() - mutualTypes, e.type().arity()));
+        rVars.addAll(envVars.get(e).subList(a.type().arity()-1, e.type().arity()));
         envVars.put(a, lVars);
         envVars.put(b, rVars);
         Term l = cterm(a), r = cterm(b);
         envVars.remove(a);
         envVars.remove(b);
-        return Term.mkExists(getAnnotatedVars(vars, getSorts(b).subList(0, mutualTypes)), Term.mkAnd(l, r));
+        return Term.mkExists(getAnnotatedVars(vars, List.of(getSorts(b).get(0))), Term.mkAnd(l, r));
     }
 
     private Term domain(ExprBinary e) {
