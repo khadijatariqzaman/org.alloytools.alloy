@@ -82,14 +82,13 @@ final class TheoryComputer {
         Sort sort = sol.addSort(sortName, sc.sig2scope(sig));
         // Recursively add all functions, and form the union of them
         nameGenerator.forbidName(sig.label);
-        FuncDecl func = sol.addFuncDecl(sig.label, List.of(sort), Sort.Bool());
-        sol.addSig(sig, func);
-        if (sc.isExact(sig)) {
-            if (opt.useScalars && sc.sig2scope(sig) == 1) {
-                Var c = Term.mkVar("c"+sig.label);
-                sol.addConstant(sig, c.of(sort));
-                sol.addAxiom(Term.mkApp(sig.label, c));
-            } else {
+        if (opt.useScalars && sc.isExact(sig) && sc.sig2scope(sig) == 1) {
+            Var c = Term.mkVar(sig.label);
+            sol.addConstant(sig, c.of(sort));
+        } else {
+            FuncDecl func = sol.addFuncDecl(sig.label, List.of(sort), Sort.Bool());
+            sol.addSig(sig, func);
+            if (sc.isExact(sig)) {
                 Var v = Term.mkVar(nameGenerator.freshName("var"));
                 sol.addAxiom(Term.mkForall(v.of(sort), Term.mkApp(sig.label, v)));
             }
@@ -100,34 +99,50 @@ final class TheoryComputer {
     private void allocateSubsetSig(PrimSig sig, Sort sort) {
         Var v = Term.mkVar(nameGenerator.freshName("var"));
         Term sum = null;
+        List<Var> constants = new ArrayList<>();
+        List<FuncDecl> funcs = new ArrayList<>();
+        List<Term> terms = new ArrayList<>();
+        boolean hasConstants = false;
         for (PrimSig child : sig.children()) {
             nameGenerator.forbidName(child.label);
             boolean check = false;
             if (opt.useScalars && sc.isExact(child) && sc.sig2scope(child) == 1) {
                 Var c = Term.mkVar(child.label);
                 sol.addConstant(child, c.of(sort));
+                sol.addAxiom(Term.mkApp(sig.label, sol.a2c(child)));
+                constants.add(c);
                 check = true;
+                hasConstants = true;
             } else {
                 FuncDecl func = sol.addFuncDecl(child.label, List.of(sort), Sort.Bool());
                 sol.addSig(child, func);
+                sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(child.label, v), Term.mkApp(sig.label, v))));
+                funcs.add(func);
                 if (sc.isExact(child))
                     sol.addAxiom(exactlyN(func, sc.sig2scope(child)));
                 if (sc.sig2scope(sig) != sc.sig2scope(child) && !sc.isExact(child))
                     sol.addAxiom(atMostN(func, sc.sig2scope(sig)));
             }
             allocateSubsetSig(child, sort);
-            if (check)
-                sol.addAxiom(Term.mkApp(sig.label, sol.a2c(child)));
-            else
-                sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(child.label, v), Term.mkApp(sig.label, v))));
             if (sum == null) {
                 sum = check ? Term.mkEq(v, sol.a2c(child)) : Term.mkApp(child.label, v);
                 continue;
             }
             Term childTerm = check ? Term.mkEq(v, sol.a2c(child)) : Term.mkApp(child.label, v);
             // subsigs are disjoint
-            sol.addAxiom(Term.mkForall(v.of(sort), Term.mkNot(Term.mkAnd(sum, childTerm))));
+            terms.add(Term.mkForall(v.of(sort), Term.mkNot(Term.mkAnd(sum, childTerm))));
             sum = Term.mkOr(sum, childTerm);
+        }
+        if (constants.size() > 1)
+            sol.addAxiom(Term.mkDistinct(constants));
+        if (hasConstants) {
+            for (FuncDecl f : funcs) {
+                for (Var c : constants)
+                    sol.addAxiom(Term.mkNot(Term.mkApp(f.name(), c)));
+            }
+        } else {
+            for (Term t : terms)
+                sol.addAxiom(t);
         }
         if (sig.isAbstract != null && sum != null)
             sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(sig.label, v), sum)));

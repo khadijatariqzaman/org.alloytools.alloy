@@ -457,6 +457,7 @@ public final class A4Solution {
                 finder = new FortressONE();
                 break;
         }
+        finder.setTimeout(31*60*1000);
         theory = Theory.empty();
     }
 

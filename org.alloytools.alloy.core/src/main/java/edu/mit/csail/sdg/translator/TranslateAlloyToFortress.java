@@ -54,11 +54,13 @@ import edu.mit.csail.sdg.ast.VisitReturn;
 import fortress.data.NameGenerator;
 import fortress.msfol.AnnotatedVar;
 import fortress.msfol.App;
+import fortress.msfol.Closure;
 import fortress.msfol.Eq;
 import fortress.msfol.Forall;
 import fortress.msfol.FuncDecl;
 import fortress.msfol.Implication;
 import fortress.msfol.IntegerLiteral;
+import fortress.msfol.ReflexiveClosure;
 import fortress.msfol.Sort;
 import fortress.msfol.Term;
 import fortress.msfol.Var;
@@ -326,6 +328,47 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         if (avars.size() == 0)
             return t;
         return Term.mkForall(avars, t);
+    }
+
+    private static boolean isApp(Term t) {
+        return t instanceof App || t instanceof Closure || t instanceof ReflexiveClosure;
+    }
+
+    private static Term helperEqApp(Eq eq, Term t, boolean removeEnd) {
+        App app = null;
+        if (t instanceof App)
+            app = (App) t;
+        else if (t instanceof Closure) {
+            Closure c = (Closure) t;
+            app = (App) Term.mkApp(c.getFunctionName(), c.getArguments());
+        } else if (t instanceof ReflexiveClosure) {
+            ReflexiveClosure rc = (ReflexiveClosure) t;
+            app = (App) Term.mkApp(rc.getFunctionName(), rc.getArguments());
+        }
+        List<Term> args = new ArrayList<>(app.getArguments());
+        if (removeEnd)
+            args.set(args.size()-1, eq.left());
+        else
+            args.set(0, eq.left());
+        app = (App) Term.mkApp(app.getFunctionName(), args);
+        if (t instanceof Closure) {
+            Closure c = (Closure) t;
+            Term arg1 = c.arg1(), arg2 = c.arg2();
+            if (removeEnd)
+                arg2 = eq.left();
+            else
+                arg1 = eq.left();
+            return Term.mkClosure(app, arg1, arg2);
+        } else if (t instanceof ReflexiveClosure) {
+            ReflexiveClosure rc = (ReflexiveClosure) t;
+            Term arg1 = rc.arg1(), arg2 = rc.arg2();
+            if (removeEnd)
+                arg2 = eq.left();
+            else
+                arg1 = eq.left();
+            return Term.mkClosure(app, arg1, arg2);
+        }
+        return app;
     }
 
     private final class BoundVariableEliminator extends VisitReturn<Expr> {
@@ -733,7 +776,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             Var v = frame.a2c(x);
             if (v == null)
                 throw new ErrorFatal(x.pos, "Sig \"" + x + "\" is not bound to a legal value during translation.\n");
-            return Term.mkEq(envVars.get(x).get(0), v);
+            if (envVars.has(x))
+                return Term.mkEq(v, envVars.get(x).get(0));
+            return v;
         }
         if (envVars.has(x))
             return Term.mkApp(func.name(), envVars.get(x));
@@ -946,9 +991,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             case IMINUS :
                 return Term.mkSub(cterm(a), cterm(b));
             case DOMAIN :
-                return domain(x);
+                throw new RuntimeException("Not implemented yet!");
             case RANGE :
-                return range(x);
+                throw new RuntimeException("Not implemented yet!");
         }
         throw new ErrorFatal(x.pos, "Unsupported operator (" + x.op + ") encountered during ExprBinary.accept()");
     }
@@ -999,13 +1044,13 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             if (r instanceof Eq) {
                 avars.remove(avars.size()-1);
                 tmp = helperForall(avars, Term.mkEq(((Eq) l).left(), ((Eq) r).left()));
-            } else if (r instanceof App) {
+            } else if (isApp(r)) {
                 avars.remove(avars.size()-1);
-                App rApp = (App) r;
-                List<Term> args = new ArrayList<>(rApp.getArguments());
-                args.set(args.size()-1, ((Eq) l).left());
-                tmp = helperForall(avars, Term.mkApp(rApp.getFunctionName(), args));
+                tmp = helperForall(avars, helperEqApp((Eq) l, r, true));
             }
+        }
+        if (r instanceof Eq && (isApp(l))) {
+            tmp = helperEqApp((Eq) r, l, true);
         }
         return (t == null) ? tmp : Term.mkAnd(t, tmp);
     }
@@ -1133,13 +1178,14 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         envVars.remove(a);
         envVars.remove(b);
         if (l instanceof Eq) {
-            if (r instanceof App) {
-                Eq lEq = (Eq) l; // left is App
-                App rApp = (App) r;
-                List<Term> args = new ArrayList<>(rApp.getArguments());
-                args.set(args.size()-1, lEq.left());
-                return Term.mkApp(rApp.getFunctionName(), args);
-            }
+            if (isApp(r))
+                return helperEqApp((Eq) l, r, false);
+        }
+        if (r instanceof Eq && ((Eq) r).left() instanceof Var) {
+            if (isApp(l))
+                return helperEqApp((Eq) r, l, true);
+            else if (l instanceof Eq)
+                return Term.mkEq(((Eq) l).left(), ((Eq) r).left());
         }
         return Term.mkExists(getAnnotatedVars(vars, List.of(getSorts(b).get(0))), Term.mkAnd(l, r));
     }
