@@ -72,8 +72,6 @@ final class TheoryComputer {
 
     public Map<Sig, Sort>           sig2sort;
 
-    public Map<Sig, FuncDecl>       sigHeirarchy;
-
     // ==============================================================================================================//
 
     NameGenerator nameGenerator() {

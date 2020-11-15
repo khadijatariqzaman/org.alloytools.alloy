@@ -303,8 +303,6 @@ public final class A4Options implements Serializable {
 
     public boolean useScalars = false;
 
-    public boolean sigHeirarchy = false;
-
     /** This method makes a copy of this Options object. */
     public A4Options dup() {
         A4Options x = new A4Options();
@@ -316,7 +314,6 @@ public final class A4Options implements Serializable {
         x.exactScopes = exactScopes;
         x.useFunctions = useFunctions;
         x.useScalars = useScalars;
-        x.sigHeirarchy = sigHeirarchy;
         x.skolemDepth = skolemDepth;
         x.coreMinimization = coreMinimization;
         x.solver = solver;
