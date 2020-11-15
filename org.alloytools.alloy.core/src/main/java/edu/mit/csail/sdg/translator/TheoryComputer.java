@@ -17,6 +17,8 @@ package edu.mit.csail.sdg.translator;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import scala.collection.JavaConverters;
 
 import edu.mit.csail.sdg.alloy4.A4Reporter;
@@ -68,9 +70,13 @@ final class TheoryComputer {
     /** Keeps track of all sort/function/var names */
     private final NameGenerator nameGenerator;
 
+    public Map<Sig, Sort>           sig2sort;
+
+    public Map<Sig, FuncDecl>       sigHeirarchy;
+
     // ==============================================================================================================//
 
-    NameGenerator getNameGenerator() {
+    NameGenerator nameGenerator() {
         return nameGenerator;
     }
 
@@ -86,11 +92,15 @@ final class TheoryComputer {
             Var c = Term.mkVar(sig.label);
             sol.addConstant(sig, c.of(sort));
         } else {
-            FuncDecl func = sol.addFuncDecl(sig.label, List.of(sort), Sort.Bool());
-            sol.addSig(sig, func);
-            if (sc.isExact(sig)) {
-                Var v = Term.mkVar(nameGenerator.freshName("var"));
-                sol.addAxiom(Term.mkForall(v.of(sort), Term.mkApp(sig.label, v)));
+            if (sc.isExact(sig) && opt.exactScopes)
+                sig2sort.put(sig, sort);
+            else {
+                FuncDecl func = sol.addFuncDecl(sig.label, List.of(sort), Sort.Bool());
+                sol.addSig(sig, func);
+                if (sc.isExact(sig)) {
+                    Var v = Term.mkVar(nameGenerator.freshName("var"));
+                    sol.addAxiom(Term.mkForall(v.of(sort), Term.mkApp(sig.label, v)));
+                }
             }
         }
         allocateSubsetSig(sig, sort);
@@ -103,32 +113,34 @@ final class TheoryComputer {
         List<FuncDecl> funcs = new ArrayList<>();
         List<Term> terms = new ArrayList<>();
         boolean hasConstants = false;
+        boolean isExact = sig2sort.containsKey(sig);
         for (PrimSig child : sig.children()) {
             nameGenerator.forbidName(child.label);
             boolean check = false;
             if (opt.useScalars && sc.isExact(child) && sc.sig2scope(child) == 1) {
                 Var c = Term.mkVar(child.label);
                 sol.addConstant(child, c.of(sort));
-                sol.addAxiom(Term.mkApp(sig.label, sol.a2c(child)));
+                sol.addAxiom(Term.mkApp(sig.label, sol.a2c(child).variable()));
                 constants.add(c);
                 check = true;
                 hasConstants = true;
             } else {
                 FuncDecl func = sol.addFuncDecl(child.label, List.of(sort), Sort.Bool());
                 sol.addSig(child, func);
-                sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(child.label, v), Term.mkApp(sig.label, v))));
+                if (!isExact)
+                    sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(child.label, v), Term.mkApp(sig.label, v))));
                 funcs.add(func);
                 if (sc.isExact(child))
                     sol.addAxiom(exactlyN(func, sc.sig2scope(child)));
-                if (sc.sig2scope(sig) != sc.sig2scope(child) && !sc.isExact(child))
-                    sol.addAxiom(atMostN(func, sc.sig2scope(sig)));
+                // if (sc.sig2scope(sig) != sc.sig2scope(child) && !sc.isExact(child))
+                //     sol.addAxiom(atMostN(func, sc.sig2scope(sig)));
             }
             allocateSubsetSig(child, sort);
             if (sum == null) {
-                sum = check ? Term.mkEq(v, sol.a2c(child)) : Term.mkApp(child.label, v);
+                sum = check ? Term.mkEq(v, sol.a2c(child).variable()) : Term.mkApp(child.label, v);
                 continue;
             }
-            Term childTerm = check ? Term.mkEq(v, sol.a2c(child)) : Term.mkApp(child.label, v);
+            Term childTerm = check ? Term.mkEq(v, sol.a2c(child).variable()) : Term.mkApp(child.label, v);
             // subsigs are disjoint
             terms.add(Term.mkForall(v.of(sort), Term.mkNot(Term.mkAnd(sum, childTerm))));
             sum = Term.mkOr(sum, childTerm);
@@ -144,8 +156,12 @@ final class TheoryComputer {
             for (Term t : terms)
                 sol.addAxiom(t);
         }
-        if (sig.isAbstract != null && sum != null)
-            sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(sig.label, v), sum)));
+        if (sig.isAbstract != null && sum != null) {
+            if (isExact)
+                sol.addAxiom(Term.mkForall(v.of(sort), sum));
+            else
+                sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(sig.label, v), sum)));
+        }
     }
 
     private Term atMostN(FuncDecl f, int n) {
@@ -200,6 +216,7 @@ final class TheoryComputer {
         this.opt = opt;
         this.bounds = sol.getBounds();
         this.nameGenerator = new IntSuffixNameGenerator(scala.collection.immutable.Set$.MODULE$.<String>empty(), 0);
+        this.sig2sort = new HashMap<>();
         // Bound the sigs
         for (Sig s : sigs)
             if (!s.builtin && s.isTopLevel())
@@ -212,14 +229,16 @@ final class TheoryComputer {
                 List<Sort> args = new ArrayList<>(t.arity());
                 List<Var> vars = new ArrayList<>(t.arity());
                 List<AnnotatedVar> avars = new ArrayList<>(t.arity());
-                List<Term> sum = new ArrayList<>(t.arity());
+                List<Term> sum = new ArrayList<>();
                 for (PrimSig p : t.fold().get(0)) {
-                    Sort sort = JavaConverters.asJavaIterable(sol.a2f(p).argSorts()).iterator().next();
+                    boolean check = sig2sort.containsKey(p);
+                    Sort sort = check ? sig2sort.get(p) : JavaConverters.asJavaIterable(sol.a2f(p).argSorts()).iterator().next();
                     args.add(sort);
                     Var v = Term.mkVar(nameGenerator.freshName("var"));
                     vars.add(v);
                     avars.add(v.of(sort));
-                    sum.add(Term.mkApp(p.label, v));
+                    if (!check)
+                        sum.add(Term.mkApp(p.label, v));
                 }
                 boolean isFunc = false;
                 if (opt.useFunctions) {
@@ -251,7 +270,8 @@ final class TheoryComputer {
                 if (!opt.useFunctions || !isFunc) {
                     FuncDecl func = sol.addFuncDecl(s.label + "." + f.label, args, Sort.Bool());
                     sol.addField(f, func);
-                    sol.addAxiom(Term.mkForall(avars, Term.mkImp(Term.mkApp(s.label + "." + f.label, vars), Term.mkAnd(sum))));
+                    if (sum.size() > 0)
+                        sol.addAxiom(Term.mkForall(avars, Term.mkImp(Term.mkApp(s.label + "." + f.label, vars), Term.mkAnd(sum))));
                 }
             }
         }
@@ -264,8 +284,8 @@ final class TheoryComputer {
      * Assign each sig and field to some Kodkod relation or expression, then set the
      * bounds.
      */
-    static NameGenerator compute(A4Reporter rep, A4Solution sol, Iterable<Sig> sigs, ScopeComputer sc, A4Options opt) {
+    static TheoryComputer compute(A4Reporter rep, A4Solution sol, Iterable<Sig> sigs, ScopeComputer sc, A4Options opt) {
         TheoryComputer tc = new TheoryComputer(rep, sol, sigs, sc, opt);
-        return tc.getNameGenerator();
+        return tc;
     }
 }

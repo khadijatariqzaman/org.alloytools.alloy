@@ -287,7 +287,7 @@ public final class A4Solution {
      */
     private Map<Expr,FuncDecl>              a2f;
 
-    private Map<Expr,Var>              a2c;
+    private Map<Expr,AnnotatedVar>              a2c;
 
     private Map<AnnotatedVar, Pair<String, Type>> declMapping;
 
@@ -325,7 +325,7 @@ public final class A4Solution {
         this.decl2type = new LinkedHashMap<Variable,Pair<Type,Pos>>();
         this.sortScopes = new LinkedHashMap<>();
         this.a2f = new LinkedHashMap<Expr, FuncDecl>();
-        this.a2c = new LinkedHashMap<Expr, Var>();
+        this.a2c = new LinkedHashMap<Expr, AnnotatedVar>();
         this.declMapping = new LinkedHashMap<>();
         this.originalOptions = opt;
         this.originalCommand = (originalCommand == null ? "" : originalCommand);
@@ -896,7 +896,7 @@ public final class A4Solution {
         if (solved)
             throw new ErrorFatal("Cannot add an additional constant since solve() has completed.");
         theory = theory.withConstant(av);
-        a2c.put(s, av.variable());
+        a2c.put(s, av);
     }
 
     void addField(Field f, FuncDecl func) throws ErrorFatal {
@@ -931,7 +931,7 @@ public final class A4Solution {
         return a2f.get(field);
     }
 
-    Var a2c(Sig sig) {
+    AnnotatedVar a2c(Sig sig) {
         return a2c.get(sig);
     }
 

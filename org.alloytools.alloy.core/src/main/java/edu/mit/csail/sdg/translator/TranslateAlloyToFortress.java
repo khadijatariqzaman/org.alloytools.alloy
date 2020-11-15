@@ -54,6 +54,7 @@ import edu.mit.csail.sdg.ast.VisitReturn;
 import fortress.data.NameGenerator;
 import fortress.msfol.AnnotatedVar;
 import fortress.msfol.App;
+import fortress.msfol.BuiltinApp;
 import fortress.msfol.Closure;
 import fortress.msfol.Eq;
 import fortress.msfol.Forall;
@@ -84,6 +85,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     /** If nonnull, it's the current command. */
     private final Command                     cmd;
 
+    private final TheoryComputer              tc;
+
     /** The unique name generator. */
     private final NameGenerator               nameGenerator; 
 
@@ -112,7 +115,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         this.rep = (rep != null) ? rep : A4Reporter.NOP;
         this.cmd = cmd;
         this.frame = sol;
-        this.nameGenerator = TheoryComputer.compute(rep, frame, sigs, sc, opt);
+        this.tc = TheoryComputer.compute(rep, frame, sigs, sc, opt);
+        this.nameGenerator = tc.nameGenerator();
     }
 
     /**
@@ -246,8 +250,14 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     private List<Sort> getSorts(Expr e) {
         Type.ProductType it = removeRClosure(e).type().iterator().next();
         List<Sort> sorts = new ArrayList<>(it.arity());
-        for (int i = 0; i < it.arity(); i++)
-            sorts.add(JavaConverters.asJavaIterable(cfunc(it.get(i)).argSorts()).iterator().next());
+        for (int i = 0; i < it.arity(); i++) {
+            if (tc.sig2sort.containsKey(it.get(i)))
+                sorts.add(tc.sig2sort.get(it.get(i)));
+            else if (e instanceof Sig && frame.a2c((Sig) e) != null)
+                sorts.add(frame.a2c((Sig) e).sort());
+            else
+                sorts.add(JavaConverters.asJavaIterable(cfunc(it.get(i)).argSorts()).iterator().next());
+        }
         return sorts;
     }
 
@@ -334,7 +344,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         return t instanceof App || t instanceof Closure || t instanceof ReflexiveClosure;
     }
 
-    private static Term helperEqApp(Eq eq, Term t, boolean removeEnd) {
+    private static Term helperEqApp(Eq eq, Term t) {
         App app = null;
         if (t instanceof App)
             app = (App) t;
@@ -346,26 +356,22 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             app = (App) Term.mkApp(rc.getFunctionName(), rc.getArguments());
         }
         List<Term> args = new ArrayList<>(app.getArguments());
-        if (removeEnd)
-            args.set(args.size()-1, eq.left());
-        else
-            args.set(0, eq.left());
+        for (int i = 0; i < args.size(); i++) {
+            if (args.get(i) == eq.right()) {
+                args.set(i, eq.left());
+                break;
+            }
+        }
         app = (App) Term.mkApp(app.getFunctionName(), args);
         if (t instanceof Closure) {
             Closure c = (Closure) t;
-            Term arg1 = c.arg1(), arg2 = c.arg2();
-            if (removeEnd)
-                arg2 = eq.left();
-            else
-                arg1 = eq.left();
+            Term arg1 = c.arg1() == eq.right() ? eq.left() : c.arg1();
+            Term arg2 = c.arg2() == eq.right() ? eq.left() : c.arg2();
             return Term.mkClosure(app, arg1, arg2);
         } else if (t instanceof ReflexiveClosure) {
             ReflexiveClosure rc = (ReflexiveClosure) t;
-            Term arg1 = rc.arg1(), arg2 = rc.arg2();
-            if (removeEnd)
-                arg2 = eq.left();
-            else
-                arg1 = eq.left();
+            Term arg1 = rc.arg1() == eq.right() ? eq.left() : rc.arg1();
+            Term arg2 = rc.arg2() == eq.right() ? eq.left() : rc.arg2();
             return Term.mkClosure(app, arg1, arg2);
         }
         return app;
@@ -739,7 +745,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             return o;
         }
         if (envVars.has(x))
-            return Term.mkEq(envVars.get(x).get(0), ans);
+            return Term.mkEq(ans, envVars.get(x).get(0));
         return ans;
     }
 
@@ -771,9 +777,11 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     /** {@inheritDoc} */
     @Override
     public Object visit(Sig x) throws Err {
+        if (tc.sig2sort.containsKey(x))
+            return Term.mkTop();
         FuncDecl func = frame.a2f(x);
         if (func == null) {
-            Var v = frame.a2c(x);
+            Var v = frame.a2c(x).variable();
             if (v == null)
                 throw new ErrorFatal(x.pos, "Sig \"" + x + "\" is not bound to a legal value during translation.\n");
             if (envVars.has(x))
@@ -1046,11 +1054,11 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 tmp = helperForall(avars, Term.mkEq(((Eq) l).left(), ((Eq) r).left()));
             } else if (isApp(r)) {
                 avars.remove(avars.size()-1);
-                tmp = helperForall(avars, helperEqApp((Eq) l, r, true));
+                tmp = helperForall(avars, helperEqApp((Eq) l, r));
             }
         }
         if (r instanceof Eq && (isApp(l))) {
-            tmp = helperEqApp((Eq) r, l, true);
+            tmp = helperEqApp((Eq) r, l);
         }
         return (t == null) ? tmp : Term.mkAnd(t, tmp);
     }
@@ -1098,7 +1106,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         }
         List<Sort> sorts = getSorts(ab.left);
         if (t != Term.mkTop()) {
-            if (!(tmp instanceof App && sorts.size() == 1 && sorts.get(0).name().equals(((App) tmp).getFunctionName().split("/")[1])))
+            if (tmp != Term.mkTop() || !(tmp instanceof App && sorts.get(0).name().equals(((App) tmp).getFunctionName().split("/")[1])))
                 t = Term.mkImp(tmp, t);
             t = Term.mkForall(getAnnotatedVars(vars, sorts), t);
         }
@@ -1138,7 +1146,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         for (ExprVar ev : evars)
             env.remove(ev);
         if (t2 != Term.mkTop()) {
-            if (!(tmp instanceof App && sorts.size() == 1 && sorts.get(0).name().equals(((App) tmp).getFunctionName().split("/")[1])))
+            if (tmp != Term.mkTop()  || !(tmp instanceof App && sorts.get(0).name().equals(((App) tmp).getFunctionName().split("/")[1])))
                 t2 = Term.mkImp(tmp, t2);
             if (t != Term.mkTop())
                 return Term.mkAnd(Term.mkForall(getAnnotatedVars(vars, sorts), t2), t);
@@ -1179,11 +1187,11 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         envVars.remove(b);
         if (l instanceof Eq) {
             if (isApp(r))
-                return helperEqApp((Eq) l, r, false);
+                return helperEqApp((Eq) l, r);
         }
         if (r instanceof Eq && ((Eq) r).left() instanceof Var) {
             if (isApp(l))
-                return helperEqApp((Eq) r, l, true);
+                return helperEqApp((Eq) r, l);
             else if (l instanceof Eq)
                 return Term.mkEq(((Eq) l).left(), ((Eq) r).left());
         }
@@ -1254,7 +1262,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             return equalsVar(a, b);
         if (isExprVar(b))
             return equalsVar(b, a);
-        List<Sort> sorts = getSorts(b);
+        List<Sort> sorts = getSorts(a);
         List<Var> vars = getVars(sorts.size());
         List<AnnotatedVar> avars = new ArrayList<>(getAnnotatedVars(vars, sorts));
         envVars.put(a, vars);
@@ -1265,6 +1273,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         if (l instanceof Eq && r instanceof Eq) {
             avars.remove(avars.size()-1);
             return helperForall(avars, Term.mkEq(((Eq) l).left(), ((Eq) r).left()));
+        }
+        if (l instanceof BuiltinApp && r instanceof BuiltinApp) {
+            return Term.mkEq(l, r);
         }
         return Term.mkForall(avars, Term.mkIff(l, r));
     }
@@ -1394,7 +1405,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                     bve = new BoundVariableEliminator(bvars, dexexpr);
                     Term tmp = cterm(dexexpr);
                     bvars.addAll(bve.boundVars);
-                    if (!(tmp instanceof App && sort.name().equals(((App) tmp).getFunctionName().split("/")[1])))
+                    if (tmp != Term.mkTop() || !(tmp instanceof App && sort.name().equals(((App) tmp).getFunctionName().split("/")[1])))
                         termList.add(tmp);
                     envVars.remove(dexexpr);
                     switch (dexexpr.mult()) {
