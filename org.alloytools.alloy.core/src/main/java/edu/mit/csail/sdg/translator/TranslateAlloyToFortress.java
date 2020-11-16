@@ -927,21 +927,17 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             case JOIN :
                 return join(x);
             case LT :
-                return Term.mkLT(cterm(a), cterm(b));
             case LTE :
-                return Term.mkLE(cterm(a), cterm(b));
             case GT :
-                return Term.mkGT(cterm(a), cterm(b));
             case GTE :
-                return Term.mkGE(cterm(a), cterm(b));
+            case EQUALS :
+                return helperComparison(a, b, x.op);
             case NOT_LT :
-                return Term.mkNot(Term.mkLT(cterm(a), cterm(b)));
             case NOT_LTE :
-                return Term.mkNot(Term.mkLE(cterm(a), cterm(b)));
             case NOT_GT :
-                return Term.mkNot(Term.mkGT(cterm(a), cterm(b)));
             case NOT_GTE :
-                return Term.mkNot(Term.mkGE(cterm(a), cterm(b)));
+            case NOT_EQUALS :
+                return Term.mkNot(helperComparison(a, b, x.op));
             case PLUS :
             case MINUS :
             case INTERSECT :
@@ -970,10 +966,6 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 envVars.put(a, envVars.get(x).subList(0, a.type().arity()));
                 envVars.put(b, envVars.get(x).subList(a.type().arity(), envVars.get(x).size()));
                 return helperBinary(x);
-            case EQUALS :
-                return equals(a, b);
-            case NOT_EQUALS :
-                return Term.mkNot(equals(a, b));
             case AND :
                 return Term.mkAnd(cterm(a), cterm(b));
             case OR :
@@ -1226,6 +1218,124 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 return Term.mkApp(((App) r).getFunctionName(), ((Eq) l).left());
         }
         return Term.mkExists(getAnnotatedVars(rVars, getSorts(b)), Term.mkAnd(l, r));
+    }
+
+    private boolean isCardinalitySet(Expr e) {
+        return e instanceof ExprUnary && ((ExprUnary) e).op == ExprUnary.Op.CARDINALITY && ((ExprUnary) e).sub.type().iterator().next().arity() == 1;
+    }
+
+    private boolean isNumber(Expr e) {
+        return e instanceof ExprConstant && ((ExprConstant) e).op == ExprConstant.Op.NUMBER;
+    }
+
+    private Term atmostN(Expr a, int num) {
+        List<Var> vars = new ArrayList<>();
+        List<AnnotatedVar> avars = new ArrayList<>();
+        List<Term> andList = new ArrayList<>(), orList = new ArrayList<>();
+        Sort sort = getSorts(a).get(0);
+        for (int i = 0; i <= num; i++) {
+            Var v = Term.mkVar(nameGenerator.freshName("var"));
+            for (Var vv : vars) {
+                orList.add(Term.mkEq(v, vv));
+            }
+            vars.add(v);
+            avars.add(v.of(sort));
+            envVars.put(a, List.of(v));
+            andList.add(cterm(a));
+            envVars.remove(a);
+        }
+        return Term.mkForall(avars, Term.mkImp(Term.mkAnd(andList), Term.mkOr(orList)));
+    }
+
+    private Term atleastN(Expr a, int num) {
+        List<Var> vars = new ArrayList<>();
+        List<AnnotatedVar> avars = new ArrayList<>();
+        List<Term> andList = new ArrayList<>();
+        Sort sort = getSorts(a).get(0);
+        for (int i = 0; i < num; i++) {
+            Var v = Term.mkVar(nameGenerator.freshName("var"));
+            for (Var vv : vars) {
+                andList.add(Term.mkNot(Term.mkEq(v, vv)));
+            }
+            vars.add(v);
+            avars.add(v.of(sort));
+            envVars.put(a, List.of(v));
+            andList.add(cterm(a));
+            envVars.remove(a);
+        }
+        return Term.mkExists(avars, Term.mkAnd(andList));
+    }
+
+    private Term exactlyN(Expr a, int num) {
+        List<Var> vars = new ArrayList<>();
+        List<AnnotatedVar> avars = new ArrayList<>();
+        List<Term> andList = new ArrayList<>(), orList = new ArrayList<>();
+        Sort sort = getSorts(a).get(0);
+        for (int i = 0; i < num; i++) {
+            Var v = Term.mkVar(nameGenerator.freshName("var"));
+            for (Var vv : vars) {
+                andList.add(Term.mkNot(Term.mkEq(v, vv)));
+            }
+            vars.add(v);
+            avars.add(v.of(sort));
+        }
+        Var v = Term.mkVar(nameGenerator.freshName("var"));
+        for (Var vv : vars) {
+            orList.add(Term.mkEq(v, vv));
+        }
+        envVars.put(a, List.of(v));
+        andList.add(Term.mkIff(cterm(a), Term.mkOr(orList)));
+        envVars.remove(a);
+        return Term.mkExists(avars, Term.mkForall(v.of(sort), Term.mkAnd(andList)));
+    }
+
+    private Term helperComparison(Expr a, Expr b, ExprBinary.Op op) {
+        if (opt.cardinality) {
+            if (isCardinalitySet(a) && isNumber(b)) {
+                Expr r = ((ExprUnary) a).sub;
+                int n = ((ExprConstant) b).num;
+                switch(op) {
+                    case LT:
+                        return atmostN(r, n-1);
+                    case LTE :
+                        return atmostN(r, n);
+                    case GT :
+                        return atleastN(r, n+1);
+                    case GTE :
+                        return atleastN(r, n);
+                    case EQUALS :
+                        return exactlyN(r, n);
+                }
+            } else if (isCardinalitySet(b) && isNumber(a)) {
+                Expr r = ((ExprUnary) b).sub;
+                int n = ((ExprConstant) a).num;
+                switch (op) {
+                    case LT:
+                        return atleastN(r, n+1);
+                    case LTE :
+                        return atleastN(r, n);
+                    case GT :
+                        return atmostN(r, n-1);
+                    case GTE :
+                        return atmostN(r, n);
+                    case EQUALS :
+                        return exactlyN(r, n);
+                }
+            }
+        }
+        switch (op) {
+            case LT:
+                return Term.mkLT(cterm(a), cterm(b));
+            case LTE :
+                return Term.mkLE(cterm(a), cterm(b));
+            case GT :
+                return Term.mkGT(cterm(a), cterm(b));
+            case GTE :
+                return Term.mkGE(cterm(a), cterm(b));
+            case EQUALS :
+                return equals(a, b);
+        }
+        throw new ErrorFatal(Pos.UNKNOWN, "Unsupported operator (" + op + ") encountered during ExprBinary.accept()");
     }
 
     private Term helperBinary(ExprBinary e) {

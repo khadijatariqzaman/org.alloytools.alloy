@@ -191,14 +191,13 @@ final class TheoryComputer {
             }
             vars.add(v);
             avars.add(v.of(sort));
-            andList.add(Term.mkApp(f.name(), v));
         }
         Var v = Term.mkVar(nameGenerator.freshName("var"));
         for (Var vv : vars) {
             orList.add(Term.mkEq(v, vv));
         }
-        andList.add(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(f.name(), v), Term.mkOr(orList))));
-        return Term.mkExists(avars, Term.mkAnd(andList));
+        andList.add(Term.mkImp(Term.mkApp(f.name(), v), Term.mkOr(orList)));
+        return Term.mkExists(avars, Term.mkForall(v.of(sort), Term.mkAnd(andList)));
     }
 
     // ==============================================================================================================//
