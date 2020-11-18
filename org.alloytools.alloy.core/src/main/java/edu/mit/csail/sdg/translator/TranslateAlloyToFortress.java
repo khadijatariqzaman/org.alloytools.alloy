@@ -799,6 +799,17 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     /* Evaluates an ExprCall node. */
     /* ============================= */
 
+    private void createPrevsFunction(Sig s) {
+        Sort sort = cfunc(s).argSorts().head();
+        FuncDecl func = frame.addFuncDecl(s.label + ".prevs", List.of(sort, sort), Sort.Bool());
+        for (int i = 0; i < frame.getScope(sort); i++)
+            for (int j = 0; j < frame.getScope(sort); j++)
+                if (i > j)
+                    frame.addAxiom(Term.mkApp(func.name(), List.of(Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort))));
+                else
+                    frame.addAxiom(Term.mkNot(Term.mkApp(func.name(), List.of(Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort)))));
+    }
+
     private void createNextsFunction(Sig s) {
         Sort sort = cfunc(s).argSorts().head();
         FuncDecl func = frame.addFuncDecl(s.label + ".nexts", List.of(sort, sort), Sort.Bool());
@@ -836,9 +847,29 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 }
                 return Term.mkApp(s.label + ".next", envVars.get(x));
             } else if (tmp[1].equals("prev")) {
-                throw new RuntimeException("Not implemented yet!");
+                Sig s = f.returnDecl.type().fold().get(0).get(0);
+                if (!frame.hasFunctionWithName(s.label + ".prev")) {
+                    Sort sort = cfunc(s).argSorts().head();
+                    FuncDecl func = frame.addFuncDecl(s.label + ".prev", List.of(sort, sort), Sort.Bool());
+                    for (int i = 0; i < frame.getScope(sort); i++)
+                        for (int j = 0; j < frame.getScope(sort); j++)
+                            if (i == j+1)
+                                frame.addAxiom(Term.mkApp(func.name(), List.of(Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort))));
+                            else
+                                frame.addAxiom(Term.mkNot(Term.mkApp(func.name(), List.of(Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort)))));
+                }
+                return Term.mkApp(s.label + ".prev", envVars.get(x));
             } else if (tmp[1].equals("prevs")) {
-                throw new RuntimeException("Not implemented yet!");
+                Sig s = f.returnDecl.type().fold().get(0).get(0);
+                Sort sort = cfunc(s).argSorts().head();
+                if (!frame.hasFunctionWithName(s.label + ".prevs")) {
+                    createPrevsFunction(s);
+                }
+                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                envVars.put(x.args.get(0), List.of(v));
+                Term t = Term.mkExists(v.of(sort), Term.mkAnd(cterm(x.args.get(0)), Term.mkApp(s.label + ".prevs", List.of(v, envVars.get(x).get(0)))));
+                envVars.remove(x.args.get(0));
+                return t;
             } else if (tmp[1].equals("nexts")) {
                 Sig s = f.returnDecl.type().fold().get(0).get(0);
                 Sort sort = cfunc(s).argSorts().head();
