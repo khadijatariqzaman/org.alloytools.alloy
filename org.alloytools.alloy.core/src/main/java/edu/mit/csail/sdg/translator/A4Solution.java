@@ -982,6 +982,8 @@ public final class A4Solution {
         final TupleFactory f = bounds.universe().factory();
         Map<String, List<Tuple>> values = new HashMap<>();
         for (FuncDecl func : interp.functionInterpretationsJava().keySet()) {
+            if (func.name().charAt(0) == '*')
+                continue;
             List<Tuple> value = new ArrayList<>();
             for (List<Value> args : interp.functionInterpretationsJava().get(func).keySet()) {
                 if (interp.functionInterpretationsJava().get(func).get(args).equals(Term.mkTop())) {

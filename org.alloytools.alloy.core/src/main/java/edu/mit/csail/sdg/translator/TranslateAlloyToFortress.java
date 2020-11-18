@@ -129,8 +129,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 for (ExprHasName n : d.names) {
                     Field f = (Field) n;
                     Expr form = s.decl.get().join(f).in(d.expr);
-                    if (s.isOne != null)
-                        throw new RuntimeException("Not implemented yet!");
+                    // if (s.isOne != null)
+                    //     throw new RuntimeException("Not implemented yet!");
                     // form = s.isOne == null ? form.forAll(s.decl) : ExprLet.make(null, (ExprVar) (s.decl.get()), s, form);
                     final Expr dexexpr = addOne(s.decl.expr);
                     Sort sort = getSorts(dexexpr).get(0);
@@ -866,19 +866,42 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         if (x.op == ExprList.Op.TOTALORDER) {
             Expr elem = x.args.get(0);
             ExprBinary first = (ExprBinary) x.args.get(1), next = (ExprBinary) x.args.get(2);
-            Sort sort = getSorts(elem).get(0);
-            Sort ord = JavaConverters.asJavaIterable(cfunc(first.left).argSorts()).iterator().next();
+            FuncDecl elm = cfunc(elem);
             FuncDecl fst = cfunc(first.right);
             FuncDecl nxt = cfunc(next.right);
-            for (int i = 1; i < frame.getScope(sort); i++)
-                frame.addAxiom(Term.mkNot(Term.mkApp(fst.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(i+1, sort)))));
-            for (int i = 0; i < frame.getScope(sort); i++)
-                for (int j = 0; j < frame.getScope(sort); j++)
-                    if (i+1 == j)
-                        frame.addAxiom(Term.mkApp(nxt.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort))));
-                    else
-                        frame.addAxiom(Term.mkNot(Term.mkApp(nxt.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort)))));
-            return Term.mkApp(fst.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(1, sort)));
+            Sort ord = cfunc(first.left).argSorts().head();
+            Sort sort = elm.argSorts().head();
+            Var v1 = Term.mkVar(nameGenerator.freshName("var"));
+            Var v2 = Term.mkVar(nameGenerator.freshName("var"));
+            Var v3 = Term.mkVar(nameGenerator.freshName("var"));
+            // elem in first.*next
+            Term t1 = Term.mkApp(fst.name(), Term.mkDomainElement(1, ord), v2);
+            Term t2 = Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v2, v1);
+            frame.addAxiom(Term.mkForall(v1.of(sort), Term.mkImp(Term.mkApp(elm.name(), v1), Term.mkExists(v2.of(sort), Term.mkAnd(t1, Term.mkReflexiveClosure((App) t2, v2, v1))))));
+            // no next.first
+            t2 = Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v1, v2);
+            frame.addAxiom(Term.mkForall(v1.of(sort), Term.mkNot(Term.mkExists(v2.of(sort), Term.mkAnd(t2, t1)))));
+            // v2 = first || one next.v2
+            frame.addAxiom(Term.mkForall(v2.of(sort), Term.mkOr(t1, Term.mkAnd(Term.mkExists(v1.of(sort), t2), Term.mkForall(v1.of(sort), Term.mkImp(t2, Term.mkForall(v3.of(sort), Term.mkImp(Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v3, v2), Term.mkEq(v1, v3)))))))));
+            // v2 = elem - next.elem || one v2.next
+            frame.addAxiom(Term.mkForall(v1.of(sort), Term.mkOr(Term.mkForall(v2.of(sort), Term.mkIff(Term.mkEq(v1, v2), Term.mkAnd(Term.mkApp(elm.name(), v2), Term.mkNot(Term.mkExists(v3.of(sort), Term.mkAnd(Term.mkApp(elm.name(), v3), Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v2, v3))))))), Term.mkAnd(Term.mkExists(v2.of(sort), t2), Term.mkForall(v2.of(sort), Term.mkImp(t2, Term.mkForall(v3.of(sort), Term.mkImp(Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v1, v3), Term.mkEq(v2, v3)))))))));
+            // !(v2 in v2.^next)
+            return Term.mkForall(v2.of(sort), Term.mkNot(Term.mkClosure((App) Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v2, v2), v2, v2)));
+            // Expr elem = x.args.get(0);
+            // ExprBinary first = (ExprBinary) x.args.get(1), next = (ExprBinary) x.args.get(2);
+            // Sort sort = getSorts(elem).get(0);
+            // Sort ord = JavaConverters.asJavaIterable(cfunc(first.left).argSorts()).iterator().next();
+            // FuncDecl fst = cfunc(first.right);
+            // FuncDecl nxt = cfunc(next.right);
+            // for (int i = 1; i < frame.getScope(sort); i++)
+            //     frame.addAxiom(Term.mkNot(Term.mkApp(fst.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(i+1, sort)))));
+            // for (int i = 0; i < frame.getScope(sort); i++)
+            //     for (int j = 0; j < frame.getScope(sort); j++)
+            //         if (i+1 == j)
+            //             frame.addAxiom(Term.mkApp(nxt.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort))));
+            //         else
+            //             frame.addAxiom(Term.mkNot(Term.mkApp(nxt.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort)))));
+            // return Term.mkApp(fst.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(1, sort)));
         }
         List<Term> terms = new ArrayList<>();
         for (int i = 0; i < x.args.size(); i++)
@@ -933,11 +956,15 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             case EQUALS :
                 return helperComparison(a, b, x.op);
             case NOT_LT :
+                return Term.mkNot(helperComparison(a, b, ExprBinary.Op.LT));
             case NOT_LTE :
+                return Term.mkNot(helperComparison(a, b, ExprBinary.Op.LTE));
             case NOT_GT :
+                return Term.mkNot(helperComparison(a, b, ExprBinary.Op.GT));
             case NOT_GTE :
+                return Term.mkNot(helperComparison(a, b, ExprBinary.Op.GTE));
             case NOT_EQUALS :
-                return Term.mkNot(helperComparison(a, b, x.op));
+                return Term.mkNot(helperComparison(a, b, ExprBinary.Op.EQUALS));
             case PLUS :
             case MINUS :
             case INTERSECT :
@@ -1224,6 +1251,10 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         return e instanceof ExprUnary && ((ExprUnary) e).op == ExprUnary.Op.CARDINALITY && ((ExprUnary) e).sub.type().iterator().next().arity() == 1;
     }
 
+    private boolean isCardinality(Expr e) {
+        return e instanceof ExprUnary && ((ExprUnary) e).op == ExprUnary.Op.CARDINALITY;
+    }
+
     private boolean isNumber(Expr e) {
         return e instanceof ExprConstant && ((ExprConstant) e).op == ExprConstant.Op.NUMBER;
     }
@@ -1387,6 +1418,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         if (l instanceof BuiltinApp && r instanceof BuiltinApp) {
             return Term.mkEq(l, r);
         }
+        if (isCardinality(a) || isCardinality(b))
+            return Term.mkForall(avars, Term.mkEq(l, r));
         return Term.mkForall(avars, Term.mkIff(l, r));
     }
 
