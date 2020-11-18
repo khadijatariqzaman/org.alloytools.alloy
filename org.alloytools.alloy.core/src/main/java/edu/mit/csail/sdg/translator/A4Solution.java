@@ -905,6 +905,12 @@ public final class A4Solution {
         a2f.put(f, func);
     }
 
+    void addExpr(Expr e, FuncDecl func) throws ErrorFatal {
+        if (solved)
+            throw new ErrorFatal("Cannot add an additional function since solve() has completed.");
+        a2f.put(e, func);
+    }
+
     void addAxiom(Term axiom) throws ErrorFatal {
         if (solved)
             throw new ErrorFatal("Cannot add a Fortress axiom since solve() has completed.");
@@ -923,12 +929,8 @@ public final class A4Solution {
         declMapping.put(av, mapping);
     }
 
-    FuncDecl a2f(Sig sig) {
-        return a2f.get(sig);
-    }
-
-    FuncDecl a2f(Field field) {
-        return a2f.get(field);
+    FuncDecl a2f(Expr e) {
+        return a2f.get(e);
     }
 
     AnnotatedVar a2c(Sig sig) {

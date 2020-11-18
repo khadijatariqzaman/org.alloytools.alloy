@@ -125,6 +125,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     private void makeFacts(Expr facts, Iterable<Sig> sigs) throws Err {
         // add the field facts and appended facts
         for (Sig s : sigs) {
+            if (s.builtin || (opt.orderingModule && s.label.split("/")[1].equals("Ord")))
+                continue;
             for (Decl d : s.getFieldDecls()) {
                 for (ExprHasName n : d.names) {
                     Field f = (Field) n;
@@ -801,29 +803,58 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     @Override
     public Object visit(ExprCall x) throws Err {
         final Func f = x.fun;
+        if (opt.orderingModule) {
+            String[] tmp = f.label.split("/");
+            if (tmp[1].equals("first")) {
+                Sort sort = cfunc(f.returnDecl.type().fold().get(0).get(0)).argSorts().head();
+                return Term.mkEq(Term.mkDomainElement(1, sort), envVars.get(x).get(0));
+            } else if (tmp[1].equals("last")) {
+                Sort sort = cfunc(f.returnDecl.type().fold().get(0).get(0)).argSorts().head();
+                return Term.mkEq(Term.mkDomainElement(frame.getScope(sort), sort), envVars.get(x).get(0));
+            } else if (tmp[1].equals("next")) {
+                if (frame.a2f(x) == null) {
+                    Sig s = f.returnDecl.type().fold().get(0).get(0);
+                    Sort sort = cfunc(s).argSorts().head();
+                    FuncDecl func = frame.addFuncDecl(s.label + ".Next", List.of(sort, sort), Sort.Bool());
+                    frame.addExpr(x, func);
+                    for (int i = 0; i < frame.getScope(sort); i++)
+                        for (int j = 0; j < frame.getScope(sort); j++)
+                            if (i+1 == j)
+                                frame.addAxiom(Term.mkApp(func.name(), List.of(Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort))));
+                            else
+                                frame.addAxiom(Term.mkNot(Term.mkApp(func.name(), List.of(Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort)))));
+                }
+                return Term.mkApp(frame.a2f(x).name(), envVars.get(x));
+            } else if (tmp[1].equals("prev")) {
+                throw new RuntimeException("Not implemented yet!");
+            } else if (tmp[1].equals("prevs")) {
+                throw new RuntimeException("Not implemented yet!");
+            } else if (tmp[1].equals("nexts")) {
+                throw new RuntimeException("Not implemented yet!");
+            } else if (tmp[1].equals("lt")) {
+                throw new RuntimeException("Not implemented yet!");
+            } else if (tmp[1].equals("gt")) {
+                throw new RuntimeException("Not implemented yet!");
+            } else if (tmp[1].equals("lte")) {
+                throw new RuntimeException("Not implemented yet!");
+            } else if (tmp[1].equals("gte")) {
+                throw new RuntimeException("Not implemented yet!");
+            } else if (tmp[1].equals("larger")) {
+                throw new RuntimeException("Not implemented yet!");
+            } else if (tmp[1].equals("smaller")) {
+                throw new RuntimeException("Not implemented yet!");
+            } else if (tmp[1].equals("max")) {
+                throw new RuntimeException("Not implemented yet!");
+            } else if (tmp[1].equals("min")) {
+                throw new RuntimeException("Not implemented yet!");
+            }
+        }
         final Expr body = f.getBody();
         if (body.type().arity() < 0 || body.type().arity() != f.returnDecl.type().arity())
             throw new ErrorType(body.span(), "Function return value not fully resolved.");
-        final int n = f.count();
-        int maxRecursion = opt.unrolls;
-        for (Func ff : current_function)
-            if (ff == f) {
-                if (maxRecursion < 0) {
-                    throw new ErrorSyntax(x.span(), "" + f + " cannot call itself recursively!");
-                }
-                if (maxRecursion == 0) {
-                    Type t = f.returnDecl.type();
-                    if (t.is_bool)
-                        return Term.mkBottom();
-                    if (t.is_int())
-                        return new IntegerLiteral(0);
-                    return Term.mkTop();
-                }
-                maxRecursion--;
-            }
         Env<ExprVar, Var> newenv = new Env<ExprVar, Var>();
         List<ExprVar> exprList = new ArrayList<>();
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < f.count(); i++) {
             if (isExprVar(x.args.get(i)))
                 newenv.put(f.get(i), (Var) visitThis(x.args.get(i)));
             else {
@@ -887,21 +918,6 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             frame.addAxiom(Term.mkForall(v1.of(sort), Term.mkOr(Term.mkForall(v2.of(sort), Term.mkIff(Term.mkEq(v1, v2), Term.mkAnd(Term.mkApp(elm.name(), v2), Term.mkNot(Term.mkExists(v3.of(sort), Term.mkAnd(Term.mkApp(elm.name(), v3), Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v2, v3))))))), Term.mkAnd(Term.mkExists(v2.of(sort), t2), Term.mkForall(v2.of(sort), Term.mkImp(t2, Term.mkForall(v3.of(sort), Term.mkImp(Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v1, v3), Term.mkEq(v2, v3)))))))));
             // !(v2 in v2.^next)
             return Term.mkForall(v2.of(sort), Term.mkNot(Term.mkClosure((App) Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v2, v2), v2, v2)));
-            // Expr elem = x.args.get(0);
-            // ExprBinary first = (ExprBinary) x.args.get(1), next = (ExprBinary) x.args.get(2);
-            // Sort sort = getSorts(elem).get(0);
-            // Sort ord = JavaConverters.asJavaIterable(cfunc(first.left).argSorts()).iterator().next();
-            // FuncDecl fst = cfunc(first.right);
-            // FuncDecl nxt = cfunc(next.right);
-            // for (int i = 1; i < frame.getScope(sort); i++)
-            //     frame.addAxiom(Term.mkNot(Term.mkApp(fst.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(i+1, sort)))));
-            // for (int i = 0; i < frame.getScope(sort); i++)
-            //     for (int j = 0; j < frame.getScope(sort); j++)
-            //         if (i+1 == j)
-            //             frame.addAxiom(Term.mkApp(nxt.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort))));
-            //         else
-            //             frame.addAxiom(Term.mkNot(Term.mkApp(nxt.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(i+1, sort), Term.mkDomainElement(j+1, sort)))));
-            // return Term.mkApp(fst.name(), List.of(Term.mkDomainElement(1, ord), Term.mkDomainElement(1, sort)));
         }
         List<Term> terms = new ArrayList<>();
         for (int i = 0; i < x.args.size(); i++)

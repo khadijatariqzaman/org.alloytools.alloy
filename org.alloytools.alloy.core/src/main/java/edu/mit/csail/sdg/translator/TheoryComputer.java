@@ -81,6 +81,8 @@ final class TheoryComputer {
     // ==============================================================================================================//
 
     private void allocatePrimSig(PrimSig sig) {
+        if (opt.orderingModule && sig.label.split("/")[1].equals("Ord"))
+            return;
         String sortName = "_"+sig.label;
         nameGenerator.forbidName(sortName);
         Sort sort = sol.addSort(sortName, sc.sig2scope(sig));
@@ -221,6 +223,8 @@ final class TheoryComputer {
         // TODO: total ordering
         // Bound the fields
         for (Sig s : sigs) {
+            if (s.builtin || (opt.orderingModule && s.label.split("/")[1].equals("Ord")))
+                continue;
             for (Field f : s.getFields()) {
                 Type t = f.type();
                 List<Sort> args = new ArrayList<>(t.arity());
