@@ -1325,10 +1325,6 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         return Term.mkExists(getAnnotatedVars(rVars, getSorts(b)), Term.mkAnd(l, r));
     }
 
-    private boolean isCardinalitySet(Expr e) {
-        return e instanceof ExprUnary && ((ExprUnary) e).op == ExprUnary.Op.CARDINALITY && ((ExprUnary) e).sub.type().iterator().next().arity() == 1;
-    }
-
     private boolean isCardinality(Expr e) {
         return e instanceof ExprUnary && ((ExprUnary) e).op == ExprUnary.Op.CARDINALITY;
     }
@@ -1337,19 +1333,38 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         return e instanceof ExprConstant && ((ExprConstant) e).op == ExprConstant.Op.NUMBER;
     }
 
+    private Term getAndList(List<Var> vars1, List<Var> vars2) {
+        Term term = Term.mkEq(vars1.get(0), vars2.get(0));
+        for (int i = 1; i < vars1.size(); i++)
+            term = Term.mkAnd(term, Term.mkEq(vars1.get(i), vars2.get(i)));
+        return term;
+    }
+
+    private Term getOrList(List<Var> vars1, List<Var> vars2) {
+        Term term = Term.mkNot(Term.mkEq(vars1.get(0), vars2.get(0)));
+        for (int i = 1; i < vars1.size(); i++)
+            term = Term.mkOr(term, Term.mkNot(Term.mkEq(vars1.get(i), vars2.get(i))));
+        return term;
+    }
+
     private Term atmostN(Expr a, int num) {
-        List<Var> vars = new ArrayList<>();
+        List<List<Var>> vars = new ArrayList<>();
         List<AnnotatedVar> avars = new ArrayList<>();
         List<Term> andList = new ArrayList<>(), orList = new ArrayList<>();
-        Sort sort = getSorts(a).get(0);
+        List<Sort> sorts = getSorts(a);
+        int arity = sorts.size();
         for (int i = 0; i <= num; i++) {
-            Var v = Term.mkVar(nameGenerator.freshName("var"));
-            for (Var vv : vars) {
-                orList.add(Term.mkEq(v, vv));
+            List<Var> varList = new ArrayList<>();
+            for (int j = 0; j < arity; j++) {
+                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                varList.add(v);
+                avars.add(v.of(sorts.get(j)));
             }
-            vars.add(v);
-            avars.add(v.of(sort));
-            envVars.put(a, List.of(v));
+            for (List<Var> vv : vars) {
+                orList.add(getAndList(varList, vv));
+            }
+            vars.add(varList);
+            envVars.put(a, varList);
             andList.add(cterm(a));
             envVars.remove(a);
         }
@@ -1357,18 +1372,23 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     }
 
     private Term atleastN(Expr a, int num) {
-        List<Var> vars = new ArrayList<>();
+        List<List<Var>> vars = new ArrayList<>();
         List<AnnotatedVar> avars = new ArrayList<>();
         List<Term> andList = new ArrayList<>();
-        Sort sort = getSorts(a).get(0);
+        List<Sort> sorts = getSorts(a);
+        int arity = sorts.size();
         for (int i = 0; i < num; i++) {
-            Var v = Term.mkVar(nameGenerator.freshName("var"));
-            for (Var vv : vars) {
-                andList.add(Term.mkNot(Term.mkEq(v, vv)));
+            List<Var> varList = new ArrayList<>();
+            for (int j = 0; j < arity; j++) {
+                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                varList.add(v);
+                avars.add(v.of(sorts.get(j)));
             }
-            vars.add(v);
-            avars.add(v.of(sort));
-            envVars.put(a, List.of(v));
+            for (List<Var> vv : vars) {
+                andList.add(getOrList(varList, vv));
+            }
+            vars.add(varList);
+            envVars.put(a, varList);
             andList.add(cterm(a));
             envVars.remove(a);
         }
@@ -1376,31 +1396,42 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     }
 
     private Term exactlyN(Expr a, int num) {
-        List<Var> vars = new ArrayList<>();
-        List<AnnotatedVar> avars = new ArrayList<>();
+        List<List<Var>> vars = new ArrayList<>();
+        List<AnnotatedVar> exists = new ArrayList<>();
         List<Term> andList = new ArrayList<>(), orList = new ArrayList<>();
-        Sort sort = getSorts(a).get(0);
+        List<Sort> sorts = getSorts(a);
+        int arity = sorts.size();
         for (int i = 0; i < num; i++) {
-            Var v = Term.mkVar(nameGenerator.freshName("var"));
-            for (Var vv : vars) {
-                andList.add(Term.mkNot(Term.mkEq(v, vv)));
+            List<Var> varList = new ArrayList<>();
+            for (int j = 0; j < arity; j++) {
+                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                varList.add(v);
+                exists.add(v.of(sorts.get(j)));
             }
-            vars.add(v);
-            avars.add(v.of(sort));
+            for (List<Var> vv : vars) {
+                andList.add(getOrList(varList, vv));
+            }
+            vars.add(varList);
         }
-        Var v = Term.mkVar(nameGenerator.freshName("var"));
-        for (Var vv : vars) {
-            orList.add(Term.mkEq(v, vv));
+        List<AnnotatedVar> forall = new ArrayList<>();
+        List<Var> varList2 = new ArrayList<>();
+        for (int i = 0; i < arity; i++) {
+            Var v = Term.mkVar(nameGenerator.freshName("var"));
+            varList2.add(v);
+            forall.add(v.of(sorts.get(i)));
         }
-        envVars.put(a, List.of(v));
+        for (List<Var> vv : vars) {
+            orList.add(getAndList(varList2, vv));
+        }
+        envVars.put(a, varList2);
         andList.add(Term.mkIff(cterm(a), Term.mkOr(orList)));
         envVars.remove(a);
-        return Term.mkExists(avars, Term.mkForall(v.of(sort), Term.mkAnd(andList)));
+        return Term.mkExists(exists, Term.mkForall(forall, Term.mkAnd(andList)));
     }
 
     private Term helperComparison(Expr a, Expr b, ExprBinary.Op op) {
         if (opt.cardinality) {
-            if (isCardinalitySet(a) && isNumber(b)) {
+            if (isCardinality(a) && isNumber(b)) {
                 Expr r = ((ExprUnary) a).sub;
                 int n = ((ExprConstant) b).num;
                 switch(op) {
@@ -1415,7 +1446,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                     case EQUALS :
                         return exactlyN(r, n);
                 }
-            } else if (isCardinalitySet(b) && isNumber(a)) {
+            } else if (isCardinality(b) && isNumber(a)) {
                 Expr r = ((ExprUnary) b).sub;
                 int n = ((ExprConstant) a).num;
                 switch (op) {
