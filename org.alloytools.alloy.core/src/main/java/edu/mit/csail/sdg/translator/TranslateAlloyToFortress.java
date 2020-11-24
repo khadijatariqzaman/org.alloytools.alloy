@@ -786,12 +786,16 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             Var v = frame.a2c(x).variable();
             if (v == null)
                 throw new ErrorFatal(x.pos, "Sig \"" + x + "\" is not bound to a legal value during translation.\n");
-            if (envVars.has(x))
-                return Term.mkEq(v, envVars.get(x).get(0));
+            if (envVars.has(x)) {
+                Term t = Term.mkEq(v, envVars.get(x).get(0));
+                return tc.notPred.contains(x) ? t : Term.mkNot(t);
+            }
             return v;
         }
-        if (envVars.has(x))
-            return Term.mkApp(func.name(), envVars.get(x));
+        if (envVars.has(x)) {
+            Term t = Term.mkApp(func.name(), envVars.get(x));
+            return tc.notPred.contains(x) ? t : Term.mkNot(t);
+        }
         return func;
     }
 

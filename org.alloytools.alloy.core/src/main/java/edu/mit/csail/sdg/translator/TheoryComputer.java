@@ -72,10 +72,16 @@ final class TheoryComputer {
 
     public Map<Sig, Sort>           sig2sort;
 
+    public List<Sig>                notPred;
+
     // ==============================================================================================================//
 
     NameGenerator nameGenerator() {
         return nameGenerator;
+    }
+
+    private Term getTerm(Sig s, Var arg) {
+        return notPred.contains(s) ? Term.mkNot(Term.mkApp(sol.a2f(s).name(), arg)) : Term.mkApp(s.label, arg);
     }
 
     // ==============================================================================================================//
@@ -112,56 +118,58 @@ final class TheoryComputer {
         List<Var> constants = new ArrayList<>();
         List<FuncDecl> funcs = new ArrayList<>();
         List<Term> terms = new ArrayList<>();
-        boolean hasConstants = false;
         boolean isExact = sig2sort.containsKey(sig);
+        boolean applyOpt = opt.sigHeirarchy && sig.isTopLevel() && sc.isExact(sig) && sig.children().size() == 2;
         for (PrimSig child : sig.children()) {
-            nameGenerator.forbidName(child.label);
-            boolean check = false;
-            if (opt.useScalars && sc.isExact(child) && sc.sig2scope(child) == 1) {
-                Var c = Term.mkVar(child.label);
-                sol.addConstant(child, c.of(sort));
-                sol.addAxiom(Term.mkApp(sig.label, sol.a2c(child).variable()));
-                constants.add(c);
-                check = true;
-                hasConstants = true;
+            if (applyOpt && sum != null) {
+                sol.addSig(child, sol.a2f(sig.children().get(0)));
+                notPred.add(child);
+                sum = null;
             } else {
-                FuncDecl func = sol.addFuncDecl(child.label, List.of(sort), Sort.Bool());
-                sol.addSig(child, func);
-                if (!isExact)
-                    sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(child.label, v), Term.mkApp(sig.label, v))));
-                funcs.add(func);
-                if (sc.isExact(child))
-                    sol.addAxiom(exactlyN(func, sc.sig2scope(child)));
-                // if (sc.sig2scope(sig) != sc.sig2scope(child) && !sc.isExact(child))
-                //     sol.addAxiom(atMostN(func, sc.sig2scope(sig)));
+                nameGenerator.forbidName(child.label);
+                boolean check = false;
+                if (opt.useScalars && sc.isExact(child) && sc.sig2scope(child) == 1) {
+                    Var c = Term.mkVar(child.label);
+                    sol.addConstant(child, c.of(sort));
+                    if (!isExact)
+                        sol.addAxiom(getTerm(sig, sol.a2c(child).variable()));
+                    constants.add(c);
+                    check = true;
+                } else {
+                    FuncDecl func = sol.addFuncDecl(child.label, List.of(sort), Sort.Bool());
+                    sol.addSig(child, func);
+                    if (!isExact)
+                        sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(child.label, v), getTerm(sig, v))));
+                    funcs.add(func);
+                    if (sc.isExact(child))
+                        sol.addAxiom(exactlyN(func, sc.sig2scope(child)));
+                    if (sc.sig2scope(sig) != sc.sig2scope(child) && !sc.isExact(child))
+                        sol.addAxiom(atMostN(func, sc.sig2scope(child)));
+                }
+                if (sum == null) {
+                    sum = check ? Term.mkEq(v, sol.a2c(child).variable()) : Term.mkApp(child.label, v);
+                    continue;
+                }
+                Term childTerm = check ? Term.mkEq(v, sol.a2c(child).variable()) : Term.mkApp(child.label, v);
+                // subsigs are disjoint
+                terms.add(Term.mkForall(v.of(sort), Term.mkNot(Term.mkAnd(sum, childTerm))));
+                sum = Term.mkOr(sum, childTerm);
             }
             allocateSubsetSig(child, sort);
-            if (sum == null) {
-                sum = check ? Term.mkEq(v, sol.a2c(child).variable()) : Term.mkApp(child.label, v);
-                continue;
-            }
-            Term childTerm = check ? Term.mkEq(v, sol.a2c(child).variable()) : Term.mkApp(child.label, v);
-            // subsigs are disjoint
-            terms.add(Term.mkForall(v.of(sort), Term.mkNot(Term.mkAnd(sum, childTerm))));
-            sum = Term.mkOr(sum, childTerm);
         }
         if (constants.size() > 1)
             sol.addAxiom(Term.mkDistinct(constants));
-        if (hasConstants) {
-            for (FuncDecl f : funcs) {
-                for (Var c : constants)
-                    sol.addAxiom(Term.mkNot(Term.mkApp(f.name(), c)));
-            }
-        } else {
+        else
             for (Term t : terms)
                 sol.addAxiom(t);
-        }
-        if (sig.isAbstract != null && sum != null) {
+        for (FuncDecl f : funcs)
+            for (Var c : constants)
+                sol.addAxiom(Term.mkNot(Term.mkApp(f.name(), c)));
+        if (sig.isAbstract != null && sum != null)
             if (isExact)
                 sol.addAxiom(Term.mkForall(v.of(sort), sum));
             else
-                sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(Term.mkApp(sig.label, v), sum)));
-        }
+                sol.addAxiom(Term.mkForall(v.of(sort), Term.mkImp(getTerm(sig, v), sum)));
     }
 
     private Term atMostN(FuncDecl f, int n) {
@@ -216,6 +224,7 @@ final class TheoryComputer {
         this.bounds = sol.getBounds();
         this.nameGenerator = new IntSuffixNameGenerator(scala.collection.immutable.Set$.MODULE$.<String>empty(), 0);
         this.sig2sort = new HashMap<>();
+        this.notPred = new ArrayList<>();
         // Bound the sigs
         for (Sig s : sigs)
             if (!s.builtin && s.isTopLevel())
@@ -239,7 +248,7 @@ final class TheoryComputer {
                     vars.add(v);
                     avars.add(v.of(sort));
                     if (!check)
-                        sum.add(Term.mkApp(p.label, v));
+                        sum.add(getTerm(p, v));
                 }
                 boolean isFunc = false;
                 if (opt.useFunctions) {
