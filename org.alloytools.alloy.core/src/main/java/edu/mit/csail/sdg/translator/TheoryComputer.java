@@ -119,7 +119,7 @@ final class TheoryComputer {
         List<FuncDecl> funcs = new ArrayList<>();
         List<Term> terms = new ArrayList<>();
         boolean isExact = sig2sort.containsKey(sig);
-        boolean applyOpt = opt.sigHeirarchy && sig.isTopLevel() && sc.isExact(sig) && sig.children().size() == 2;
+        boolean applyOpt = opt.sigHeirarchy && sig.isTopLevel() && sc.isExact(sig) && sig.isAbstract != null && sig.children().size() == 2;
         for (PrimSig child : sig.children()) {
             if (applyOpt && sum != null) {
                 sol.addSig(child, sol.a2f(sig.children().get(0)));

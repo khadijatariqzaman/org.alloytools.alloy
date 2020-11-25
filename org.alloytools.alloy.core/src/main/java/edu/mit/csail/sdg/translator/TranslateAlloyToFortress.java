@@ -788,13 +788,13 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 throw new ErrorFatal(x.pos, "Sig \"" + x + "\" is not bound to a legal value during translation.\n");
             if (envVars.has(x)) {
                 Term t = Term.mkEq(v, envVars.get(x).get(0));
-                return tc.notPred.contains(x) ? t : Term.mkNot(t);
+                return tc.notPred.contains(x) ? Term.mkNot(t) : t;
             }
             return v;
         }
         if (envVars.has(x)) {
             Term t = Term.mkApp(func.name(), envVars.get(x));
-            return tc.notPred.contains(x) ? t : Term.mkNot(t);
+            return tc.notPred.contains(x) ? Term.mkNot(t) : t;
         }
         return func;
     }
