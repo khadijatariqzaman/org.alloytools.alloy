@@ -97,9 +97,11 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     private Env<ExprVar, Expr>                letMappings      = new Env<ExprVar, Expr>();
 
     private Env<Expr, FuncDecl>               cache            = new Env<Expr, FuncDecl>(); 
+    private Env<String, FuncDecl>             cardinCache      = new Env<String, FuncDecl>(); 
 
     private Env<Expr, List<Var>>              envVars          = new Env<Expr, List<Var>>();
 
+    private int                               funcCount;
     /**
      * Construct a translator based on the given list of sigs and the given command.
      *
@@ -117,6 +119,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         this.frame = sol;
         this.tc = TheoryComputer.compute(rep, frame, sigs, sc, opt);
         this.nameGenerator = tc.nameGenerator();
+        this.funcCount = 0;
     }
 
     /**
@@ -249,16 +252,22 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             return name;
     }
 
+    private String getFreshFunc() {
+        funcCount++;
+        return "func_"+funcCount;
+    }
+
     private List<Sort> getSorts(Expr e) {
         Type.ProductType it = removeRClosure(e).type().iterator().next();
         List<Sort> sorts = new ArrayList<>(it.arity());
         for (int i = 0; i < it.arity(); i++) {
-            if (tc.sig2sort.containsKey(it.get(i)))
-                sorts.add(tc.sig2sort.get(it.get(i)));
+            Sort tmp = frame.a2s(it.get(i));
+            if (tmp != null)
+                sorts.add(tmp);
             else if (e instanceof Sig && frame.a2c((Sig) e) != null)
                 sorts.add(frame.a2c((Sig) e).sort());
             else
-                sorts.add(JavaConverters.asJavaIterable(cfunc(it.get(i)).argSorts()).iterator().next());
+                sorts.add(cfunc(it.get(i)).argSorts().head());
         }
         return sorts;
     }
@@ -266,7 +275,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     private List<Var> getVars(int numVars) {
         List<Var> vars = new ArrayList<>();
         for (int i = 0; i < numVars; i++)
-            vars.add(Term.mkVar(nameGenerator.freshName("var")));
+            vars.add(tc.getFreshVar());
         return vars;
     }
 
@@ -284,11 +293,18 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         return t;
     }
 
+    private Expr removeExprUnary(Expr a) {
+        if (a instanceof ExprUnary)
+            return ((ExprUnary) a).sub;
+        return a;
+    }
+
     private boolean isExprVar(Expr a) {
+        a = removeExprUnary(a);
         if (a instanceof ExprVar)
             return !letMappings.has((ExprVar) a);
-        if (a instanceof ExprUnary && ((ExprUnary) a).sub instanceof ExprVar)
-            return !letMappings.has((ExprVar) ((ExprUnary) a).sub);
+        if (a instanceof Sig)
+            return frame.a2c((Sig) a) != null;
         return false;
     }
 
@@ -427,7 +443,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 this.hasLetMappings = true;
             } else if (!boundVars.contains(x)) {
                 boundVars.add(x);
-                env.put(x, Term.mkVar(nameGenerator.freshName("var")));
+                env.put(x, tc.getFreshVar());
             }
             return x;
         }
@@ -646,22 +662,28 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
 
     private Term cardinality(Expr e) {
         BoundVariableEliminator bve = new BoundVariableEliminator(e);
+        List<Var> tmpVars = getVars(e.type().arity());
+        envVars.put(e, tmpVars);
+        Term t = cterm(e);
+        envVars.remove(e);
+        String func;
+        if (t instanceof App)
+            func = ((App) t).getFunctionName();
+        else
+            throw new RuntimeException("Not implemented yet!");
         List<Sort> sorts = getSorts(e);
         List<List<Term>> domainValues = new ArrayList<>();
-        if (!cache.has(e)) {
+        if (!cardinCache.has(func)) {
             List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
             List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-            envVars.put(e, getVars(e.type().arity()));
-            Term t = cterm(e);
             for (ExprVar bv : bve.boundVars) {
                 argSorts.add(getSorts(bv).get(0));
                 vars.add(env.get(bv));
             }
-            vars.addAll(envVars.get(e));
+            vars.addAll(tmpVars);
             argSorts.addAll(sorts);
-            envVars.remove(e);
-            String funcName = nameGenerator.freshName("func");
-            cache.put(e, frame.addFuncDecl(funcName, argSorts, Sort.Int()));
+            String funcName = getFreshFunc();
+            cardinCache.put(func, frame.addFuncDecl(funcName, argSorts, Sort.Int()));
             frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkOr(Term.mkAnd(Term.mkEq(Term.mkApp(funcName, vars), new IntegerLiteral(1)), t), Term.mkAnd(Term.mkEq(Term.mkApp(funcName, vars), new IntegerLiteral(0)), Term.mkNot(t)))));
         }
         for (ExprVar bv : bve.boundVars) {
@@ -675,9 +697,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             domainValues.add(domainVal);
         }
         List<List<Term>> appValues = getCartesianProduct(domainValues);
-        Term term = Term.mkApp(cache.get(e).name(), appValues.get(0));
+        Term term = Term.mkApp(cardinCache.get(func).name(), appValues.get(0));
         for (int i = 1; i < appValues.size(); i++)
-            term = Term.mkPlus(term, Term.mkApp(cache.get(e).name(), appValues.get(i)));
+            term = Term.mkPlus(term, Term.mkApp(cardinCache.get(func).name(), appValues.get(i)));
         return term;
     }
 
@@ -698,9 +720,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 vars.addAll(envVars.get(x.sub));
                 sorts.addAll(getSorts(x.sub));
                 envVars.remove(x.sub);
-                String funcName = nameGenerator.freshName("func");
+                String funcName = getFreshFunc();
                 cache.put(x.sub, frame.addFuncDecl(funcName, sorts, Sort.Bool()));
-                frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkIff(Term.mkApp(funcName, vars), t)));
+                frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkEq(Term.mkApp(funcName, vars), t)));
             }
             for (ExprVar bv : bve.boundVars) {
                 env.remove(bv);
@@ -721,10 +743,10 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             List<Sort> sorts = new ArrayList<>();
             for (Sort s : JavaConverters.asJavaIterable(frame.getFuncDecl(app.getFunctionName()).argSorts()))
                 sorts.add(s);
-            cache.put(x.sub, frame.addFuncDecl(nameGenerator.freshName("func"), sorts, Sort.Bool()));
+            cache.put(x.sub, frame.addFuncDecl(getFreshFunc(), sorts, Sort.Bool()));
             List<Var> vars = args.stream().map(a -> (Var) a).collect(Collectors.toList());
             app = (App) Term.mkApp(cache.get(x.sub).name(), args);
-            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkIff(app, t)));
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkEq(app, t)));
         }
         return c ? Term.mkClosure(app, envVars.get(x).get(0), envVars.get(x).get(1)) : Term.mkReflexiveClosure(app, envVars.get(x).get(0), envVars.get(x).get(1));    
     }
@@ -779,7 +801,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     /** {@inheritDoc} */
     @Override
     public Object visit(Sig x) throws Err {
-        if (tc.sig2sort.containsKey(x))
+        if (frame.a2s(x) != null)
             return Term.mkTop();
         FuncDecl func = frame.a2f(x);
         if (func == null) {
@@ -869,7 +891,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 if (!frame.hasFunctionWithName(s.label + ".prevs")) {
                     createPrevsFunction(s);
                 }
-                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                Var v = tc.getFreshVar();
                 envVars.put(x.args.get(0), List.of(v));
                 Term t = Term.mkExists(v.of(sort), Term.mkAnd(cterm(x.args.get(0)), Term.mkApp(s.label + ".prevs", List.of(v, envVars.get(x).get(0)))));
                 envVars.remove(x.args.get(0));
@@ -880,7 +902,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 if (!frame.hasFunctionWithName(s.label + ".nexts")) {
                     createNextsFunction(s);
                 }
-                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                Var v = tc.getFreshVar();
                 envVars.put(x.args.get(0), List.of(v));
                 Term t = Term.mkExists(v.of(sort), Term.mkAnd(cterm(x.args.get(0)), Term.mkApp(s.label + ".nexts", List.of(v, envVars.get(x).get(0)))));
                 envVars.remove(x.args.get(0));
@@ -908,7 +930,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 if (!frame.hasFunctionWithName(s.label + ".nexts")) {
                     createNextsFunction(s);
                 }
-                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                Var v = tc.getFreshVar();
                 envVars.put(x.args.get(0), List.of(v));
                 t = Term.mkAnd(t, Term.mkNot(Term.mkExists(v.of(sort), Term.mkAnd(cterm(x.args.get(0)), Term.mkApp(s.label + ".nexts", v, envVars.get(x).get(0))))));
                 envVars.remove(x.args.get(0));
@@ -968,9 +990,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             FuncDecl nxt = cfunc(next.right);
             Sort ord = cfunc(first.left).argSorts().head();
             Sort sort = elm.argSorts().head();
-            Var v1 = Term.mkVar(nameGenerator.freshName("var"));
-            Var v2 = Term.mkVar(nameGenerator.freshName("var"));
-            Var v3 = Term.mkVar(nameGenerator.freshName("var"));
+            Var v1 = tc.getFreshVar();
+            Var v2 = tc.getFreshVar();
+            Var v3 = tc.getFreshVar();
             // elem in first.*next
             Term t1 = Term.mkApp(fst.name(), Term.mkDomainElement(1, ord), v2);
             Term t2 = Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v2, v1);
@@ -981,7 +1003,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             // v2 = first || one next.v2
             frame.addAxiom(Term.mkForall(v2.of(sort), Term.mkOr(t1, Term.mkAnd(Term.mkExists(v1.of(sort), t2), Term.mkForall(v1.of(sort), Term.mkImp(t2, Term.mkForall(v3.of(sort), Term.mkImp(Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v3, v2), Term.mkEq(v1, v3)))))))));
             // v2 = elem - next.elem || one v2.next
-            frame.addAxiom(Term.mkForall(v1.of(sort), Term.mkOr(Term.mkForall(v2.of(sort), Term.mkIff(Term.mkEq(v1, v2), Term.mkAnd(Term.mkApp(elm.name(), v2), Term.mkNot(Term.mkExists(v3.of(sort), Term.mkAnd(Term.mkApp(elm.name(), v3), Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v2, v3))))))), Term.mkAnd(Term.mkExists(v2.of(sort), t2), Term.mkForall(v2.of(sort), Term.mkImp(t2, Term.mkForall(v3.of(sort), Term.mkImp(Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v1, v3), Term.mkEq(v2, v3)))))))));
+            frame.addAxiom(Term.mkForall(v1.of(sort), Term.mkOr(Term.mkForall(v2.of(sort), Term.mkEq(Term.mkEq(v1, v2), Term.mkAnd(Term.mkApp(elm.name(), v2), Term.mkNot(Term.mkExists(v3.of(sort), Term.mkAnd(Term.mkApp(elm.name(), v3), Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v2, v3))))))), Term.mkAnd(Term.mkExists(v2.of(sort), t2), Term.mkForall(v2.of(sort), Term.mkImp(t2, Term.mkForall(v3.of(sort), Term.mkImp(Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v1, v3), Term.mkEq(v2, v3)))))))));
             // !(v2 in v2.^next)
             return Term.mkForall(v2.of(sort), Term.mkNot(Term.mkClosure((App) Term.mkApp(nxt.name(), Term.mkDomainElement(1, ord), v2, v2), v2, v2)));
         }
@@ -1080,7 +1102,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             case OR :
                 return Term.mkOr(cterm(a), cterm(b));
             case IFF :
-                return Term.mkIff(cterm(a), cterm(b));
+                return Term.mkEq(cterm(a), cterm(b));
             case PLUSPLUS :
                 return plusplus(x);
             case MUL :
@@ -1127,7 +1149,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                     avars.remove(avars.size()-1);
                     return helperForall(avars, Term.mkEq(((Eq) t).left(), ((Eq) r).left()));
                 }
-                return Term.mkForall(avars, Term.mkIff(t, r));
+                return Term.mkForall(avars, Term.mkEq(t, r));
             case ONEOF :
                 if (field && opt.useFunctions)
                     return Term.mkTop();
@@ -1360,7 +1382,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         for (int i = 0; i <= num; i++) {
             List<Var> varList = new ArrayList<>();
             for (int j = 0; j < arity; j++) {
-                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                Var v = tc.getFreshVar();
                 varList.add(v);
                 avars.add(v.of(sorts.get(j)));
             }
@@ -1384,7 +1406,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         for (int i = 0; i < num; i++) {
             List<Var> varList = new ArrayList<>();
             for (int j = 0; j < arity; j++) {
-                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                Var v = tc.getFreshVar();
                 varList.add(v);
                 avars.add(v.of(sorts.get(j)));
             }
@@ -1408,7 +1430,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         for (int i = 0; i < num; i++) {
             List<Var> varList = new ArrayList<>();
             for (int j = 0; j < arity; j++) {
-                Var v = Term.mkVar(nameGenerator.freshName("var"));
+                Var v = tc.getFreshVar();
                 varList.add(v);
                 exists.add(v.of(sorts.get(j)));
             }
@@ -1420,7 +1442,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         List<AnnotatedVar> forall = new ArrayList<>();
         List<Var> varList2 = new ArrayList<>();
         for (int i = 0; i < arity; i++) {
-            Var v = Term.mkVar(nameGenerator.freshName("var"));
+            Var v = tc.getFreshVar();
             varList2.add(v);
             forall.add(v.of(sorts.get(i)));
         }
@@ -1428,7 +1450,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             orList.add(getAndList(varList2, vv));
         }
         envVars.put(a, varList2);
-        andList.add(Term.mkIff(cterm(a), Term.mkOr(orList)));
+        andList.add(Term.mkEq(cterm(a), Term.mkOr(orList)));
         envVars.remove(a);
         return Term.mkExists(exists, Term.mkForall(forall, Term.mkAnd(andList)));
     }
@@ -1500,8 +1522,10 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             envVars.put(b, List.of(vars.get(0)));
             t = cterm(b);
             envVars.remove(b);
+            if (t instanceof Eq)
+                return Term.mkEq(((Eq) t).left(), (Var) visitThis(e));
             envVars.put(e, List.of(vars.get(0)));
-            t = Term.mkForall(getAnnotatedVars(vars, getSorts(e)), Term.mkIff(cterm(e), t));
+            t = Term.mkForall(getAnnotatedVars(vars, getSorts(b)), Term.mkEq(cterm(e), t));
             envVars.remove(e);
         } else {
             envVars.put(b, List.of((Var) visitThis(e)));
@@ -1516,6 +1540,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             return equalsVar(a, b);
         if (isExprVar(b))
             return equalsVar(b, a);
+        if (isCardinality(a) || isCardinality(b))
+            return Term.mkEq(cterm(a), cterm(b));
         List<Sort> sorts = getSorts(a);
         List<Var> vars = getVars(sorts.size());
         List<AnnotatedVar> avars = new ArrayList<>(getAnnotatedVars(vars, sorts));
@@ -1528,12 +1554,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             avars.remove(avars.size()-1);
             return helperForall(avars, Term.mkEq(((Eq) l).left(), ((Eq) r).left()));
         }
-        if (l instanceof BuiltinApp && r instanceof BuiltinApp) {
-            return Term.mkEq(l, r);
-        }
-        if (isCardinality(a) || isCardinality(b))
-            return Term.mkForall(avars, Term.mkEq(l, r));
-        return Term.mkForall(avars, Term.mkIff(l, r));
+        return Term.mkForall(avars, Term.mkEq(l, r));
     }
 
     private Term plusplus(ExprBinary e) {
@@ -1615,7 +1636,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                     env.put((ExprVar) dex, v);
                     envVars.put(dexexpr, List.of(v));
                     Term tmp = cterm(dexexpr);
-                    termList.add(tmp);
+                    if (tmp != Term.mkTop())
+                        termList.add(tmp);
                     envVars.remove(dexexpr);
                     switch (dexexpr.mult()) {
                         case SETOF :
@@ -1692,9 +1714,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 vars.add(env.get(bv));
                 sorts.add(getSorts(bv).get(0));
             }
-            String funcName = nameGenerator.freshName("func");
+            String funcName = getFreshFunc();
             cache.put(sub, frame.addFuncDecl(funcName, sorts, Sort.Bool()));
-            frame.addAxiom(getQtTerm(false, getAnnotatedVars(vars, sorts), termList, Term.mkIff(Term.mkApp(funcName, vars), term)));
+            frame.addAxiom(getQtTerm(false, getAnnotatedVars(vars, sorts), termList, Term.mkEq(Term.mkApp(funcName, vars), term)));
         }
         for (ExprVar bv : bve.boundVars)
             env.remove(bv);

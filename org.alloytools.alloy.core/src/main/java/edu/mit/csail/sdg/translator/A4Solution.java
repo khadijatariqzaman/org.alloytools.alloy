@@ -289,6 +289,8 @@ public final class A4Solution {
 
     private Map<Expr,AnnotatedVar>              a2c;
 
+    private Map<Expr,Sort>                  a2s;
+
     private Map<AnnotatedVar, Pair<String, Type>> declMapping;
 
     /**
@@ -326,6 +328,7 @@ public final class A4Solution {
         this.sortScopes = new LinkedHashMap<>();
         this.a2f = new LinkedHashMap<Expr, FuncDecl>();
         this.a2c = new LinkedHashMap<Expr, AnnotatedVar>();
+        this.a2s = new LinkedHashMap<Expr, Sort>();
         this.declMapping = new LinkedHashMap<>();
         this.originalOptions = opt;
         this.originalCommand = (originalCommand == null ? "" : originalCommand);
@@ -495,6 +498,7 @@ public final class A4Solution {
         sortScopes = old.sortScopes;
         a2f = ConstMap.make(old.a2f);
         a2c = ConstMap.make(old.a2c);
+        a2s = ConstMap.make(old.a2s);
         declMapping = ConstMap.make(old.declMapping);
         a2k = new LinkedHashMap<Expr,Expression>();
         for (Map.Entry<Expr,Expression> e : old.a2k.entrySet())
@@ -522,6 +526,7 @@ public final class A4Solution {
         atom2sig = ConstMap.make(atom2sig);
         a2f = ConstMap.make(a2f);
         a2c = ConstMap.make(a2c);
+        a2s = ConstMap.make(a2s);
         sortScopes = ConstMap.make(sortScopes);
         declMapping = ConstMap.make(declMapping);
         solved = true;
@@ -892,7 +897,13 @@ public final class A4Solution {
         a2f.put(s, func);
     }
 
-    void addConstant(Sig s, AnnotatedVar av) throws ErrorFatal {
+    void addSig(Sig s, Sort sort) throws ErrorFatal {
+        if (solved)
+            throw new ErrorFatal("Cannot add an additional sig since solve() has completed.");
+        a2s.put(s, sort);
+    }
+
+    void addSig(Sig s, AnnotatedVar av) throws ErrorFatal {
         if (solved)
             throw new ErrorFatal("Cannot add an additional constant since solve() has completed.");
         theory = theory.withConstant(av);
@@ -931,6 +942,10 @@ public final class A4Solution {
         return a2c.get(sig);
     }
 
+    Sort a2s(Sig sig) {
+        return a2s.get(sig);
+    }
+
     Boolean hasFunctionWithName(String funcName) {
         return theory.signature().hasFunctionWithName(funcName);
     }
@@ -957,6 +972,7 @@ public final class A4Solution {
     private Instance getInstance(Interpretation interp) {
         Map<Value, Object> valueMappings = new HashMap<>();
         Map<Tuple, Relation> f2kMapping = new HashMap<>();
+        List<Sort> sorts = new ArrayList<>();
         List<Object> atoms = new ArrayList<>();
         for (Sig sig : sigs) {
             if (a2f.containsKey(sig)) {
@@ -973,6 +989,25 @@ public final class A4Solution {
                         }
                     }
                 }
+            } else if (a2c.containsKey(sig)) {
+                Value arg = interp.constantInterpretationsJava().get(a2c(sig));
+                if (!valueMappings.containsKey(arg)) {
+                    Object atom = getUpperBound(a2k(sig)).iterator().next().atom(0);
+                    valueMappings.put(arg, atom);
+                    atoms.add(atom);
+                }
+            } else if (a2s.containsKey(sig)) {
+                sorts.add(a2s(sig));
+                Iterator<Tuple> ts = getUpperBound(a2k(sig)).iterator();
+                for (Value arg : interp.sortInterpretationsJava().get(a2s(sig))) {
+                    if (!valueMappings.containsKey(arg)) {
+                        Object atom = ts.next().atom(0);
+                        while (atoms.contains(atom))
+                            atom = ts.next().atom(0);
+                        valueMappings.put(arg, atom);
+                        atoms.add(atom);
+                    }
+                }
             }
         }
         final TupleFactory f = bounds.universe().factory();
@@ -981,16 +1016,37 @@ public final class A4Solution {
             if (func.name().charAt(0) == '*')
                 continue;
             List<Tuple> value = new ArrayList<>();
-            for (List<Value> args : interp.functionInterpretationsJava().get(func).keySet()) {
-                if (interp.functionInterpretationsJava().get(func).get(args).equals(Term.mkTop())) {
-                    List<Object> tuple = args.stream().map(v -> valueMappings.get(v)).collect(Collectors.toList());
-                    if (func.name().endsWith("First") || func.name().endsWith("Next"))
-                        tuple.remove(0);
+            if (func.resultSort().equals(Sort.Bool())) {
+                for (List<Value> args : interp.functionInterpretationsJava().get(func).keySet()) {
+                    if (interp.functionInterpretationsJava().get(func).get(args).equals(Term.mkTop())) {
+                        List<Object> tuple = args.stream().map(v -> valueMappings.get(v)).collect(Collectors.toList());
+                        if (func.name().endsWith("First") || func.name().endsWith("Next"))
+                            tuple.remove(0);
+                        value.add(f.tuple(tuple));
+                    }
+                }
+            } else if (!func.resultSort().equals(Sort.Int()))  {
+                for (Map.Entry<List<Value>, Value> args : interp.functionInterpretationsJava().get(func).entrySet()) {
+                    List<Object> tuple = args.getKey().stream().map(v -> valueMappings.get(v)).collect(Collectors.toList());
+                    tuple.add(valueMappings.get(args.getValue()));
                     value.add(f.tuple(tuple));
                 }
             }
             values.put(func.name(), value);
-        } 
+        }
+        for (AnnotatedVar av : interp.constantInterpretationsJava().keySet()) {
+            List<Tuple> value = new ArrayList<>();
+            value.add(f.tuple(List.of(valueMappings.get(interp.constantInterpretationsJava().get(av)))));
+            values.put(av.name(), value);
+        }
+        for (Sort sort : sorts) {
+            List<Tuple> value = new ArrayList<>();
+            for (Value elem : interp.sortInterpretationsJava().get(sort)) {
+                List<Object> tuple = List.of(valueMappings.get(elem));
+                value.add(f.tuple(tuple));
+            }
+            values.put(sort.name().substring(1), value);
+        }
         final Instance instance = new Instance(bounds.universe());
         for (Relation r : bounds.relations()) {
             TupleSet upper = bounds.upperBound(r);

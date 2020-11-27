@@ -19,7 +19,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
-import scala.collection.JavaConverters;
 
 import edu.mit.csail.sdg.alloy4.A4Reporter;
 import edu.mit.csail.sdg.ast.Expr;
@@ -70,14 +69,19 @@ final class TheoryComputer {
     /** Keeps track of all sort/function/var names */
     private final NameGenerator nameGenerator;
 
-    public Map<Sig, Sort>           sig2sort;
-
     public List<Sig>                notPred;
+
+    public int                      cnt;
 
     // ==============================================================================================================//
 
     NameGenerator nameGenerator() {
         return nameGenerator;
+    }
+
+    public Var getFreshVar() {
+        cnt++;
+        return Term.mkVar("var_"+cnt); 
     }
 
     private Term getTerm(Sig s, Var arg) {
@@ -87,8 +91,6 @@ final class TheoryComputer {
     // ==============================================================================================================//
 
     private void allocatePrimSig(PrimSig sig) {
-        if (opt.orderingModule && sig.label.split("/")[1].equals("Ord"))
-            return;
         String sortName = "_"+sig.label;
         nameGenerator.forbidName(sortName);
         Sort sort = sol.addSort(sortName, sc.sig2scope(sig));
@@ -96,15 +98,15 @@ final class TheoryComputer {
         nameGenerator.forbidName(sig.label);
         if (opt.useScalars && sc.isExact(sig) && sc.sig2scope(sig) == 1) {
             Var c = Term.mkVar(sig.label);
-            sol.addConstant(sig, c.of(sort));
+            sol.addSig(sig, c.of(sort));
         } else {
             if (sc.isExact(sig) && opt.exactScopes)
-                sig2sort.put(sig, sort);
+                sol.addSig(sig, sort);
             else {
                 FuncDecl func = sol.addFuncDecl(sig.label, List.of(sort), Sort.Bool());
                 sol.addSig(sig, func);
                 if (sc.isExact(sig)) {
-                    Var v = Term.mkVar(nameGenerator.freshName("var"));
+                    Var v = getFreshVar();
                     sol.addAxiom(Term.mkForall(v.of(sort), Term.mkApp(sig.label, v)));
                 }
             }
@@ -113,12 +115,12 @@ final class TheoryComputer {
     }
 
     private void allocateSubsetSig(PrimSig sig, Sort sort) {
-        Var v = Term.mkVar(nameGenerator.freshName("var"));
+        Var v = getFreshVar();
         Term sum = null;
         List<Var> constants = new ArrayList<>();
         List<FuncDecl> funcs = new ArrayList<>();
         List<Term> terms = new ArrayList<>();
-        boolean isExact = sig2sort.containsKey(sig);
+        boolean isExact = sol.a2s(sig) != null;
         boolean applyOpt = opt.sigHeirarchy && sig.isTopLevel() && sc.isExact(sig) && sig.isAbstract != null && sig.children().size() == 2;
         for (PrimSig child : sig.children()) {
             if (applyOpt && sum != null) {
@@ -130,7 +132,7 @@ final class TheoryComputer {
                 boolean check = false;
                 if (opt.useScalars && sc.isExact(child) && sc.sig2scope(child) == 1) {
                     Var c = Term.mkVar(child.label);
-                    sol.addConstant(child, c.of(sort));
+                    sol.addSig(child, c.of(sort));
                     if (!isExact)
                         sol.addAxiom(getTerm(sig, sol.a2c(child).variable()));
                     constants.add(c);
@@ -159,7 +161,7 @@ final class TheoryComputer {
         }
         if (constants.size() > 1)
             sol.addAxiom(Term.mkDistinct(constants));
-        else
+        if (constants.isEmpty())
             for (Term t : terms)
                 sol.addAxiom(t);
         for (FuncDecl f : funcs)
@@ -176,9 +178,9 @@ final class TheoryComputer {
         List<Var> vars = new ArrayList<>();
         List<AnnotatedVar> avars = new ArrayList<>();
         List<Term> andList = new ArrayList<>(), orList = new ArrayList<>();
-        Sort sort = JavaConverters.asJavaIterable(f.argSorts()).iterator().next();
+        Sort sort = f.argSorts().head();
         for (int i = 0; i <= n; i++) {
-            Var v = Term.mkVar(nameGenerator.freshName("var"));
+            Var v = getFreshVar();
             for (Var vv : vars) {
                 orList.add(Term.mkEq(v, vv));
             }
@@ -193,16 +195,16 @@ final class TheoryComputer {
         List<Var> vars = new ArrayList<>();
         List<AnnotatedVar> avars = new ArrayList<>();
         List<Term> andList = new ArrayList<>(), orList = new ArrayList<>();
-        Sort sort = JavaConverters.asJavaIterable(f.argSorts()).iterator().next();
+        Sort sort = f.argSorts().head();
         for (int i = 0; i < n; i++) {
-            Var v = Term.mkVar(nameGenerator.freshName("var"));
+            Var v = getFreshVar();
             for (Var vv : vars) {
                 andList.add(Term.mkNot(Term.mkEq(v, vv)));
             }
             vars.add(v);
             avars.add(v.of(sort));
         }
-        Var v = Term.mkVar(nameGenerator.freshName("var"));
+        Var v = getFreshVar();
         for (Var vv : vars) {
             orList.add(Term.mkEq(v, vv));
         }
@@ -223,17 +225,14 @@ final class TheoryComputer {
         this.opt = opt;
         this.bounds = sol.getBounds();
         this.nameGenerator = new IntSuffixNameGenerator(scala.collection.immutable.Set$.MODULE$.<String>empty(), 0);
-        this.sig2sort = new HashMap<>();
         this.notPred = new ArrayList<>();
-        // Bound the sigs
-        for (Sig s : sigs)
-            if (!s.builtin && s.isTopLevel())
-                allocatePrimSig((PrimSig) s);
-        // TODO: total ordering
-        // Bound the fields
+        this.cnt = 0;
+        // Bound the sigs and fields
         for (Sig s : sigs) {
             if (s.builtin || (opt.orderingModule && s.label.split("/")[1].equals("Ord")))
                 continue;
+            if (s.isTopLevel())
+                allocatePrimSig((PrimSig) s);
             for (Field f : s.getFields()) {
                 Type t = f.type();
                 List<Sort> args = new ArrayList<>(t.arity());
@@ -241,13 +240,13 @@ final class TheoryComputer {
                 List<AnnotatedVar> avars = new ArrayList<>(t.arity());
                 List<Term> sum = new ArrayList<>();
                 for (PrimSig p : t.fold().get(0)) {
-                    boolean check = sig2sort.containsKey(p);
-                    Sort sort = check ? sig2sort.get(p) : JavaConverters.asJavaIterable(sol.a2f(p).argSorts()).iterator().next();
+                    Sort tmp = sol.a2s(p);
+                    Sort sort = tmp != null ? sol.a2s(p) : sol.a2f(p).argSorts().head();
                     args.add(sort);
-                    Var v = Term.mkVar(nameGenerator.freshName("var"));
+                    Var v = getFreshVar();
                     vars.add(v);
                     avars.add(v.of(sort));
-                    if (!check)
+                    if (tmp == null)
                         sum.add(getTerm(p, v));
                 }
                 boolean isFunc = false;
@@ -274,7 +273,8 @@ final class TheoryComputer {
                         Var returnVar = vars.remove(vars.size() - 1);
                         FuncDecl func = sol.addFuncDecl(s.label + "." + f.label, args, returnType);
                         sol.addField(f, func);
-                        sol.addAxiom(Term.mkForall(avars, Term.mkImp(Term.mkEq(Term.mkApp(s.label + "." + f.label, vars), returnVar), Term.mkAnd(sum))));
+                        if (sum.size() > 0)
+                            sol.addAxiom(Term.mkForall(avars, Term.mkImp(Term.mkEq(Term.mkApp(s.label + "." + f.label, vars), returnVar), Term.mkAnd(sum))));
                     }
                 }
                 if (!opt.useFunctions || !isFunc) {
@@ -284,8 +284,23 @@ final class TheoryComputer {
                         sol.addAxiom(Term.mkForall(avars, Term.mkImp(Term.mkApp(s.label + "." + f.label, vars), Term.mkAnd(sum))));
                 }
             }
+            // Add any additional SIZE constraints
+            // if (s.isOne != null && sol.a2c(s) == null) {
+            //     Var v1 = Term.mkVar(nameGenerator.freshName("var"));
+            //     Var v2 = Term.mkVar(nameGenerator.freshName("var"));
+            //     Sort sort = sol.a2f(s).argSorts().head();
+            //     sol.addAxiom(Term.mkAnd(Term.mkExists(v1.of(sort), getTerm(s, v1)), Term.mkForall(v1.of(sort), Term.mkImp(getTerm(s, v1), Term.mkForall(v2.of(sort), Term.mkImp(getTerm(s, v2), Term.mkEq(v1, v2)))))));
+            // } else if (s.isSome != null && !sig2sort.containsKey(s)) {
+            //     Var v = Term.mkVar(nameGenerator.freshName("var"));
+            //     Sort sort = sol.a2f(s).argSorts().head();
+            //     sol.addAxiom(Term.mkExists(v.of(sort), getTerm(s, v)));
+            // } else if (s.isLone != null && !sig2sort.containsKey(s)) {
+            //     Var v1 = Term.mkVar(nameGenerator.freshName("var"));
+            //     Var v2 = Term.mkVar(nameGenerator.freshName("var"));
+            //     Sort sort = sol.a2f(s).argSorts().head();
+            //     sol.addAxiom(Term.mkForall(v1.of(sort), Term.mkImp(getTerm(s, v1), Term.mkForall(v2.of(sort), Term.mkImp(getTerm(s, v2), Term.mkEq(v1, v2))))));
+            // }
         }
-        // TODO: Add any additional SIZE constraints
     }
 
     // ==============================================================================================================//
