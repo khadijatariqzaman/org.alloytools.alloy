@@ -943,6 +943,8 @@ public final class A4Solution {
     }
 
     Sort a2s(Sig sig) {
+        if (sig == SIGINT)
+            return Sort.Int();
         return a2s.get(sig);
     }
 

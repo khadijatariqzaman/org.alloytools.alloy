@@ -602,8 +602,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             case CAST2SIGINT :
                 return cterm(x.sub);
             case CAST2INT :
-                // check scope of x.sub and add all values
-                throw new RuntimeException("Not implemented yet!");
+                return cterm(x.sub);
             case RCLOSURE :
                 if (envVars.get(x).size() != 2)
                     throw new ErrorFatal(x.pos, "Two rclosure variables (" + x + ") not provided!");
@@ -636,10 +635,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         Term t = cterm(e);
         envVars.remove(e);
         List<Var> vars2 = getVars(sorts.size());
-        envVars.put(e, vars2);
-        t = Term.mkAnd(Term.mkExists(getAnnotatedVars(vars, sorts), t), Term.mkForall(getAnnotatedVars(vars2, sorts), Term.mkImp(cterm(e), Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkImp(t, compareVars(vars, vars2))))));
-        envVars.remove(e);
-        return t;
+        return Term.mkExists(getAnnotatedVars(vars2, sorts), Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkImp(t, compareVars(vars, vars2))));
     }
 
     private Term some(Expr e) {
@@ -785,6 +781,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             throw new ErrorFatal(x.pos, "Sig \"" + x + "\" is not bound to a legal value during translation.\n");
         if (envVars.has(x)) {
             if (func.resultSort() != Sort.Bool()) {
+                if (envVars.get(x).size() == 1)
+                    return Term.mkApp(func.name(), envVars.get(x));
                 List<Var> vars = new ArrayList<>(envVars.get(x));
                 Var v = vars.remove(vars.size() - 1);
                 return Term.mkEq(Term.mkApp(func.name(), vars), v);
@@ -1284,7 +1282,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         Term t;
         if (isExprVar(a)) {
             vars.add((Var) cterm(a));
-            vars.addAll(envVars.get(e)); 
+            if (envVars.has(e))
+                vars.addAll(envVars.get(e)); 
             envVars.put(b, vars);
             t = cterm(b);
             envVars.remove(b);
@@ -1540,7 +1539,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             return equalsVar(a, b);
         if (isExprVar(b))
             return equalsVar(b, a);
-        if (isCardinality(a) || isCardinality(b))
+        if (a.type().is_int())
             return Term.mkEq(cterm(a), cterm(b));
         List<Sort> sorts = getSorts(a);
         List<Var> vars = getVars(sorts.size());
