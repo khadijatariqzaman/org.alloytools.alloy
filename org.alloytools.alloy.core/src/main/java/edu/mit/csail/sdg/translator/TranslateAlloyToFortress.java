@@ -700,52 +700,68 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     }
 
     private Term closure(ExprUnary x, boolean c) {
+        Sort sort = getSorts(x.sub).get(0);
+        Expr expr = x.sub;
         Term t = cterm(x.sub);
-        if (!(t instanceof App)) {
-            BoundVariableEliminator bve = new BoundVariableEliminator(x.sub);
-            List<Term> args = new ArrayList<>(bve.boundVars.size()+2);
-            if (!cache.has(x.sub)) {
-                List<Var> vars = new ArrayList<>(bve.boundVars.size()+2);
-                List<Sort> sorts = new ArrayList<>(bve.boundVars.size()+2);
-                envVars.put(x.sub, getVars(2));
-                t = cterm(x.sub);
-                for (ExprVar bv : bve.boundVars) {
-                    sorts.add(getSorts(bv).get(0));
-                    vars.add(env.get(bv));
-                }
-                vars.addAll(envVars.get(x.sub));
-                sorts.addAll(getSorts(x.sub));
-                envVars.remove(x.sub);
-                String funcName = getFreshFunc();
-                cache.put(x.sub, frame.addFuncDecl(funcName, sorts, Sort.Bool()));
-                frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkEq(Term.mkApp(funcName, vars), t)));
-            }
-            for (ExprVar bv : bve.boundVars) {
-                env.remove(bv);
-                args.add(env.get(bv));
-            }
-            args.addAll(envVars.get(x.sub));
-            t = Term.mkApp(cache.get(x.sub).name(), args);
-        }
-        // look at order of variables in app and compare to envvars, if not introduce new function and add axiom, change t to new app
+        for (int i = 1; i < frame.getScope(sort); i++) {
+            expr = expr.join(x.sub);
+            envVars.put(expr, envVars.get(x.sub));
+            t = Term.mkOr(cterm(expr));
+            envVars.remove(expr);
+        } 
+        if (!c)
+            t = Term.mkOr(t, Term.mkEq(envVars.get(x.sub).get(0), envVars.get(x.sub).get(1)));
         envVars.remove(x.sub);
-        App app = (App) t;
-        List<Term> args = new ArrayList<>(app.getArguments());
-        int idx1 = args.indexOf(envVars.get(x).get(0));
-        int idx2 = args.indexOf(envVars.get(x).get(1));
-        if (idx1 > idx2) {
-            args.set(idx1, envVars.get(x).get(1));
-            args.set(idx2, envVars.get(x).get(0));
-            List<Sort> sorts = new ArrayList<>();
-            for (Sort s : JavaConverters.asJavaIterable(frame.getFuncDecl(app.getFunctionName()).argSorts()))
-                sorts.add(s);
-            cache.put(x.sub, frame.addFuncDecl(getFreshFunc(), sorts, Sort.Bool()));
-            List<Var> vars = args.stream().map(a -> (Var) a).collect(Collectors.toList());
-            app = (App) Term.mkApp(cache.get(x.sub).name(), args);
-            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkEq(app, t)));
-        }
-        return c ? Term.mkClosure(app, envVars.get(x).get(0), envVars.get(x).get(1)) : Term.mkReflexiveClosure(app, envVars.get(x).get(0), envVars.get(x).get(1));    
+        return t;
     }
+
+    // private Term closure(ExprUnary x, boolean c) {
+    //     Term t = cterm(x.sub);
+    //     if (!(t instanceof App)) {
+    //         BoundVariableEliminator bve = new BoundVariableEliminator(x.sub);
+    //         List<Term> args = new ArrayList<>(bve.boundVars.size()+2);
+    //         if (!cache.has(x.sub)) {
+    //             List<Var> vars = new ArrayList<>(bve.boundVars.size()+2);
+    //             List<Sort> sorts = new ArrayList<>(bve.boundVars.size()+2);
+    //             envVars.put(x.sub, getVars(2));
+    //             t = cterm(x.sub);
+    //             for (ExprVar bv : bve.boundVars) {
+    //                 sorts.add(getSorts(bv).get(0));
+    //                 vars.add(env.get(bv));
+    //             }
+    //             vars.addAll(envVars.get(x.sub));
+    //             sorts.addAll(getSorts(x.sub));
+    //             envVars.remove(x.sub);
+    //             String funcName = getFreshFunc();
+    //             cache.put(x.sub, frame.addFuncDecl(funcName, sorts, Sort.Bool()));
+    //             frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkEq(Term.mkApp(funcName, vars), t)));
+    //         }
+    //         for (ExprVar bv : bve.boundVars) {
+    //             env.remove(bv);
+    //             args.add(env.get(bv));
+    //         }
+    //         args.addAll(envVars.get(x.sub));
+    //         t = Term.mkApp(cache.get(x.sub).name(), args);
+    //     }
+    //     // look at order of variables in app and compare to envvars, if not introduce new function and add axiom, change t to new app
+    //     envVars.remove(x.sub);
+    //     App app = (App) t;
+    //     List<Term> args = new ArrayList<>(app.getArguments());
+    //     int idx1 = args.indexOf(envVars.get(x).get(0));
+    //     int idx2 ;= args.indexOf(envVars.get(x).get(1));
+    //     if (idx1 > idx2) {
+    //         args.set(idx1, envVars.get(x).get(1));
+    //         args.set(idx2, envVars.get(x).get(0));
+    //         List<Sort> sorts = new ArrayList<>();
+    //         for (Sort s : JavaConverters.asJavaIterable(frame.getFuncDecl(app.getFunctionName()).argSorts()))
+    //             sorts.add(s);
+    //         cache.put(x.sub, frame.addFuncDecl(getFreshFunc(), sorts, Sort.Bool()));
+    //         List<Var> vars = args.stream().map(a -> (Var) a).collect(Collectors.toList());
+    //         app = (App) Term.mkApp(cache.get(x.sub).name(), args);
+    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkEq(app, t)));
+    //     }
+    //     return c ? Term.mkClosure(app, envVars.get(x).get(0), envVars.get(x).get(1)) : Term.mkReflexiveClosure(app, envVars.get(x).get(0), envVars.get(x).get(1));    
+    // }
 
     /* ============================ */
     /* Evaluates an ExprVar node. */
@@ -803,11 +819,11 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             return Term.mkTop();
         FuncDecl func = frame.a2f(x);
         if (func == null) {
-            Var v = frame.a2c(x).variable();
+            AnnotatedVar v = frame.a2c(x);
             if (v == null)
                 throw new ErrorFatal(x.pos, "Sig \"" + x + "\" is not bound to a legal value during translation.\n");
             if (envVars.has(x)) {
-                Term t = Term.mkEq(v, envVars.get(x).get(0));
+                Term t = Term.mkEq(v.variable(), envVars.get(x).get(0));
                 return tc.notPred.contains(x) ? Term.mkNot(t) : t;
             }
             return v;

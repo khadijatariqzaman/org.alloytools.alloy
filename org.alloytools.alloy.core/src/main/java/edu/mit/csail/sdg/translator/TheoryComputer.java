@@ -127,6 +127,7 @@ final class TheoryComputer {
                 sol.addSig(child, sol.a2f(sig.children().get(0)));
                 notPred.add(child);
                 sum = null;
+                allocateSubsetSig(child, sort);
             } else {
                 nameGenerator.forbidName(child.label);
                 boolean check = false;
@@ -148,6 +149,7 @@ final class TheoryComputer {
                     if (sc.sig2scope(sig) != sc.sig2scope(child) && !sc.isExact(child))
                         sol.addAxiom(atMostN(func, sc.sig2scope(child)));
                 }
+                allocateSubsetSig(child, sort);
                 if (sum == null) {
                     sum = check ? Term.mkEq(v, sol.a2c(child).variable()) : Term.mkApp(child.label, v);
                     continue;
@@ -157,7 +159,6 @@ final class TheoryComputer {
                 terms.add(Term.mkForall(v.of(sort), Term.mkNot(Term.mkAnd(sum, childTerm))));
                 sum = Term.mkOr(sum, childTerm);
             }
-            allocateSubsetSig(child, sort);
         }
         if (constants.size() > 1)
             sol.addAxiom(Term.mkDistinct(constants));
