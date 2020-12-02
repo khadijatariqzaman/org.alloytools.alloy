@@ -264,8 +264,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             Sort tmp = frame.a2s(it.get(i));
             if (tmp != null)
                 sorts.add(tmp);
-            else if (e instanceof Sig && frame.a2c((Sig) e) != null)
-                sorts.add(frame.a2c((Sig) e).sort());
+            else if (frame.a2c(it.get(i)) != null)
+                sorts.add(frame.a2c(it.get(i)).sort());
             else
                 sorts.add(cfunc(it.get(i)).argSorts().head());
         }
@@ -826,7 +826,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
                 Term t = Term.mkEq(v.variable(), envVars.get(x).get(0));
                 return tc.notPred.contains(x) ? Term.mkNot(t) : t;
             }
-            return v;
+            return v.variable();
         }
         if (envVars.has(x)) {
             Term t = Term.mkApp(func.name(), envVars.get(x));
