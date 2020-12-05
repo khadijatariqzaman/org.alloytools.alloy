@@ -19,7 +19,9 @@ import static edu.mit.csail.sdg.alloy4.Util.tail;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import scala.collection.JavaConverters;
 
@@ -96,8 +98,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
 
     private Env<ExprVar, Expr>                letMappings      = new Env<ExprVar, Expr>();
 
-    private Env<Expr, FuncDecl>               cache            = new Env<Expr, FuncDecl>(); 
-    private Env<String, FuncDecl>             cardinCache      = new Env<String, FuncDecl>(); 
+    private Map<Expr, FuncDecl>               cache            = new HashMap<Expr, FuncDecl>();
+    private Map<String, FuncDecl>             closureCache      = new HashMap<String, FuncDecl>();
+    private Map<String, FuncDecl>             cardinCache      = new HashMap<String, FuncDecl>();
 
     private Env<Expr, List<Var>>              envVars          = new Env<Expr, List<Var>>();
 
@@ -606,11 +609,11 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             case RCLOSURE :
                 if (envVars.get(x).size() != 2)
                     throw new ErrorFatal(x.pos, "Two rclosure variables (" + x + ") not provided!");
-                return closure(x, false);
+                return closure(x.sub, false);
             case CLOSURE :
                 if (envVars.get(x).size() != 2)
                     throw new ErrorFatal(x.pos, "Two closure variables (" + x + ") not provided!");
-                return closure(x, true);
+                return closure(x.sub, true);
         }
         throw new ErrorFatal(x.pos, "Unsupported operator (" + x.op + ") encountered during ExprUnary.visit()");
     }
@@ -669,7 +672,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             throw new RuntimeException("Not implemented yet!");
         List<Sort> sorts = getSorts(e);
         List<List<Term>> domainValues = new ArrayList<>();
-        if (!cardinCache.has(func)) {
+        if (!cardinCache.containsKey(func)) {
             List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
             List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
             for (ExprVar bv : bve.boundVars) {
@@ -699,20 +702,79 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         return term;
     }
 
-    private Term closure(ExprUnary x, boolean c) {
-        Sort sort = getSorts(x.sub).get(0);
-        Expr expr = x.sub;
-        Term t = cterm(x.sub);
-        for (int i = 1; i < frame.getScope(sort); i++) {
-            expr = expr.join(x.sub);
-            envVars.put(expr, envVars.get(x.sub));
-            t = Term.mkOr(cterm(expr));
-            envVars.remove(expr);
-        } 
-        if (!c)
-            t = Term.mkOr(t, Term.mkEq(envVars.get(x.sub).get(0), envVars.get(x.sub).get(1)));
-        envVars.remove(x.sub);
-        return t;
+    // Naive closure approach
+    // private Term closure(Expr e, boolean c) {
+    //     Sort sort = getSorts(e).get(0);
+    //     Expr expr = e;
+    //     Term t = cterm(x.sub);
+    //     for (int i = 1; i < frame.getScope(sort); i++) {
+    //         expr = expr.join(e);
+    //         envVars.put(expr, envVars.get(e));
+    //         t = Term.mkOr(cterm(expr));
+    //         envVars.remove(expr);
+    //     } 
+    //     if (!c)
+    //         t = Term.mkOr(t, Term.mkEq(envVars.get(e).get(0), envVars.get(e).get(1)));
+    //     envVars.remove(e);
+    //     return t;
+    // }
+
+    private Term getClosureTerm(String func, List<Var> bv, List<Var> vars, AnnotatedVar var) {
+        List<Term> args = new ArrayList<>(bv);
+        args.add(vars.get(0));
+        args.add(var.variable());
+        Term t = Term.mkApp(func, args);
+        args.set(bv.size(), var.variable());
+        args.set(bv.size()+1, vars.get(1));
+        t = Term.mkAnd(t, Term.mkApp(func, args));
+        args.set(bv.size(), vars.get(0));
+        return Term.mkOr(Term.mkApp(func, args), Term.mkExists(var, t));
+    }
+
+    // Approach 1: Iterative squaring
+    private Term closure(Expr e, boolean c) {
+        BoundVariableEliminator bve = new BoundVariableEliminator(e);
+        List<Var> tmpVars = getVars(e.type().arity());
+        Var tmpVar = tc.getFreshVar();
+        envVars.put(e, List.of(tmpVars.get(0), tmpVar));
+        Term t = cterm(e);
+        envVars.remove(e);
+        String func;
+        if (t instanceof App)
+            func = ((App) t).getFunctionName();
+        else
+            throw new RuntimeException("Not implemented yet!");
+        List<Sort> sorts = getSorts(e);
+        if (!closureCache.containsKey(func)) {
+            List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
+            List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
+            for (ExprVar bv : bve.boundVars) {
+                argSorts.add(getSorts(bv).get(0));
+                vars.add(env.get(bv));
+            }
+            argSorts.addAll(sorts);
+            vars.addAll(tmpVars);
+            envVars.put(e, List.of(tmpVar, tmpVars.get(1)));
+            t = Term.mkAnd(t, cterm(e));
+            envVars.remove(e);
+            envVars.put(e, tmpVars);
+            t = Term.mkOr(cterm(e), Term.mkExists(tmpVar.of(sorts.get(0)), t));
+            envVars.remove(e);
+            String newFunc = func;
+            for (int i = 1; i < Math.ceil(Math.log(frame.getScope(sorts.get(0))))/Math.log(2); i++) {
+                newFunc = getFreshFunc();
+                closureCache.put(func, frame.addFuncDecl(newFunc, argSorts, Sort.Bool()));
+                frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkIff(Term.mkApp(newFunc, vars), t)));
+                t = getClosureTerm(newFunc, vars.subList(0, bve.boundVars.size()), tmpVars, tmpVar.of(sorts.get(0)));
+            }
+        }
+        List<Var> finalArgs = new ArrayList<>();
+        for (ExprVar bv : bve.boundVars) {
+            env.remove(bv);
+            finalArgs.add((Var) cterm(bv));
+        }
+        t = getClosureTerm(closureCache.get(func).name(), finalArgs, envVars.get(e), tmpVar.of(sorts.get(0)));
+        return c ? t : Term.mkOr(t, Term.mkEq(envVars.get(e).get(0),envVars.get(e).get(1)));
     }
 
     // private Term closure(ExprUnary x, boolean c) {
@@ -1313,7 +1375,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             envVars.remove(a);
             return t;
         }
-        vars.addAll(getVars(1));
+        vars.add(tc.getFreshVar());
         List<Var> lVars = new ArrayList(envVars.get(e).subList(0, a.type().arity()-1));
         lVars.addAll(vars);
         List<Var> rVars = new ArrayList(vars);
@@ -1336,35 +1398,36 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         return Term.mkExists(getAnnotatedVars(vars, List.of(getSorts(b).get(0))), Term.mkAnd(l, r));
     }
 
-    private Term domain(ExprBinary e) {
-        Expr a = e.left, b = e.right;
-        List<Var> lVars = getVars(1);
-        List<Var> rVars = new ArrayList(lVars);
-        rVars.addAll(envVars.get(e));
-        envVars.put(a, lVars);
-        envVars.put(b, rVars);
-        Term l = cterm(a), r = cterm(b);
-        envVars.remove(a);
-        envVars.remove(b);
-        return Term.mkExists(getAnnotatedVars(lVars, getSorts(a)), Term.mkAnd(l, r));
-    }
+    // private Term domain(ExprBinary e) {
+    //     Expr a = e.left, b = e.right;
+    //     Var lVar = tc.getFreshVar();
+    //     List<Var> rVars = new ArrayList(lVar);
+    //     rVars.add()
+    //     rVars.addAll(envVars.get(e));
+    //     envVars.put(a, List.of(lVar));
+    //     envVars.put(b, rVars);
+    //     Term l = cterm(a), r = cterm(b);
+    //     envVars.remove(a);
+    //     envVars.remove(b);
+    //     return Term.mkExists(lVar.of(getSorts(a).get(0)), Term.mkAnd(l, r));
+    // }
 
-    private Term range(ExprBinary e) {
-        Expr a = e.left, b = e.right;
-        List<Var> rVars = getVars(1);
-        List<Var> lVars = new ArrayList(envVars.get(e));
-        lVars.addAll(rVars);
-        envVars.put(a, lVars);
-        envVars.put(b, rVars);
-        Term l = cterm(a), r = cterm(b);
-        envVars.remove(a);
-        envVars.remove(b);
-        if (l instanceof Eq) {
-            if (r instanceof App)
-                return Term.mkApp(((App) r).getFunctionName(), ((Eq) l).left());
-        }
-        return Term.mkExists(getAnnotatedVars(rVars, getSorts(b)), Term.mkAnd(l, r));
-    }
+    // private Term range(ExprBinary e) {
+    //     Expr a = e.left, b = e.right;
+    //     List<Var> rVars = tc.getFreshVar();
+    //     List<Var> lVars = new ArrayList(envVars.get(e));
+    //     lVars.addAll(rVars);
+    //     envVars.put(a, lVars);
+    //     envVars.put(b, rVars);
+    //     Term l = cterm(a), r = cterm(b);
+    //     envVars.remove(a);
+    //     envVars.remove(b);
+    //     if (l instanceof Eq) {
+    //         if (r instanceof App)
+    //             return Term.mkApp(((App) r).getFunctionName(), ((Eq) l).left());
+    //     }
+    //     return Term.mkExists(getAnnotatedVars(rVars, getSorts(b)), Term.mkAnd(l, r));
+    // }
 
     private boolean isCardinality(Expr e) {
         return e instanceof ExprUnary && ((ExprUnary) e).op == ExprUnary.Op.CARDINALITY;
@@ -1533,14 +1596,14 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     private Term equalsVar(Expr e, Expr b) {
         Term t;
         if (!isExprVar(b)) {
-            List<Var> vars = getVars(1);
-            envVars.put(b, List.of(vars.get(0)));
+            Var v = tc.getFreshVar();
+            envVars.put(b, List.of(v));
             t = cterm(b);
             envVars.remove(b);
             if (t instanceof Eq)
                 return Term.mkEq(((Eq) t).left(), (Var) visitThis(e));
-            envVars.put(e, List.of(vars.get(0)));
-            t = Term.mkForall(getAnnotatedVars(vars, getSorts(b)), Term.mkEq(cterm(e), t));
+            envVars.put(e, List.of(v));
+            t = Term.mkForall(v.of(getSorts(b).get(0)), Term.mkEq(cterm(e), t));
             envVars.remove(e);
         } else {
             envVars.put(b, List.of((Var) visitThis(e)));
@@ -1718,7 +1781,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         exprVars.addAll(bvars);
         bve = new BoundVariableEliminator(exprVars, sub);
         Term term = cterm(sub);
-        if (!cache.has(sub)) {
+        if (!cache.containsKey(sub)) {
             List<Var> vars = new ArrayList<>(bve.boundVars.size());
             List<Sort> sorts = new ArrayList<>(bve.boundVars.size());
             for (ExprVar bv : bve.boundVars.subList(varSize, bve.boundVars.size())) {
