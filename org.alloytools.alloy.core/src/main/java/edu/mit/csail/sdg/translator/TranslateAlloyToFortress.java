@@ -706,7 +706,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     private Term closure(Expr e, boolean c) {
         Sort sort = getSorts(e).get(0);
         Expr expr = e;
-        Term t = cterm(x.sub);
+        Term t = cterm(e);
         for (int i = 1; i < frame.getScope(sort); i++) {
             expr = expr.join(e);
             envVars.put(expr, envVars.get(e));
