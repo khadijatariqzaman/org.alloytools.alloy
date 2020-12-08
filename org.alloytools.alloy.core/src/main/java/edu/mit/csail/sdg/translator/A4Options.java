@@ -299,15 +299,18 @@ public final class A4Options implements Serializable {
 
     public boolean exactScopes = false;
 
+    public boolean sigHeirarchy = false;
+
     public boolean useFunctions = false;
 
     public boolean useScalars = false;
 
     public boolean orderingModule = false;
 
+    public int closure = 0;
+
     public boolean cardinality = false;
 
-    public boolean sigHeirarchy = false;
 
     /** This method makes a copy of this Options object. */
     public A4Options dup() {
@@ -318,11 +321,12 @@ public final class A4Options implements Serializable {
         x.fortressTimeLimit = fortressTimeLimit;
         x.fortressModelFinder = fortressModelFinder;
         x.exactScopes = exactScopes;
+        x.sigHeirarchy = sigHeirarchy;
         x.useFunctions = useFunctions;
         x.useScalars = useScalars;
         x.orderingModule = orderingModule;
+        x.closure = closure;
         x.cardinality = cardinality;
-        x.sigHeirarchy = sigHeirarchy;
         x.skolemDepth = skolemDepth;
         x.coreMinimization = coreMinimization;
         x.solver = solver;

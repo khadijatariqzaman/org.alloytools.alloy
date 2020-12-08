@@ -229,11 +229,12 @@ final class TheoryComputer {
         this.notPred = new ArrayList<>();
         this.cnt = 0;
         // Bound the sigs and fields
+        for (Sig s : sigs)
+            if (!s.builtin && s.isTopLevel() && !(opt.orderingModule && s.label.split("/")[1].equals("Ord")))
+                allocatePrimSig((PrimSig) s);
         for (Sig s : sigs) {
             if (s.builtin || (opt.orderingModule && s.label.split("/")[1].equals("Ord")))
                 continue;
-            if (s.isTopLevel())
-                allocatePrimSig((PrimSig) s);
             for (Field f : s.getFields()) {
                 Type t = f.type();
                 List<Sort> args = new ArrayList<>(t.arity());
@@ -242,7 +243,7 @@ final class TheoryComputer {
                 List<Term> sum = new ArrayList<>();
                 for (PrimSig p : t.fold().get(0)) {
                     Sort tmp = sol.a2s(p);
-                    Sort sort = tmp != null ? sol.a2s(p) : sol.a2f(p).argSorts().head();
+                    Sort sort = tmp != null ? tmp : sol.a2f(p).argSorts().head();
                     args.add(sort);
                     Var v = getFreshVar();
                     vars.add(v);

@@ -702,15 +702,30 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         return term;
     }
 
-    // Naive closure approach
     private Term closure(Expr e, boolean c) {
+        switch (opt.closure) {
+            case 0:
+                return naiveClosure(e, c);
+            case 1:
+                return iterativeClosure(e, c);
+            case 2:
+                return claessenClosure(e, c);
+            case 3:
+                return ejickClosure(e, c);
+            default:
+                return liuClosure(e, c);
+        }
+    }
+
+    // Naive closure approach
+    private Term naiveClosure(Expr e, boolean c) {
         Sort sort = getSorts(e).get(0);
         Expr expr = e;
         Term t = cterm(e);
         for (int i = 1; i < frame.getScope(sort); i++) {
             expr = expr.join(e);
             envVars.put(expr, envVars.get(e));
-            t = Term.mkOr(cterm(expr));
+            t = Term.mkOr(t, cterm(expr));
             envVars.remove(expr);
         } 
         if (!c)
@@ -732,50 +747,50 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     }
 
     // Approach 1: Iterative squaring
-    // private Term closure(Expr e, boolean c) {
-    //     BoundVariableEliminator bve = new BoundVariableEliminator(e);
-    //     List<Var> tmpVars = getVars(e.type().arity());
-    //     Var tmpVar = tc.getFreshVar();
-    //     envVars.put(e, List.of(tmpVars.get(0), tmpVar));
-    //     Term t = cterm(e);
-    //     envVars.remove(e);
-    //     String func;
-    //     if (t instanceof App)
-    //         func = ((App) t).getFunctionName();
-    //     else
-    //         throw new RuntimeException("Not implemented yet!");
-    //     List<Sort> sorts = getSorts(e);
-    //     if (!closureCache.containsKey(func)) {
-    //         List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-    //         List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-    //         for (ExprVar bv : bve.boundVars) {
-    //             argSorts.add(getSorts(bv).get(0));
-    //             vars.add(env.get(bv));
-    //         }
-    //         argSorts.addAll(sorts);
-    //         vars.addAll(tmpVars);
-    //         envVars.put(e, List.of(tmpVar, tmpVars.get(1)));
-    //         t = Term.mkAnd(t, cterm(e));
-    //         envVars.remove(e);
-    //         envVars.put(e, tmpVars);
-    //         t = Term.mkOr(cterm(e), Term.mkExists(tmpVar.of(sorts.get(0)), t));
-    //         envVars.remove(e);
-    //         String newFunc = func;
-    //         for (int i = 1; i < Math.ceil(Math.log(frame.getScope(sorts.get(0))))/Math.log(2); i++) {
-    //             newFunc = getFreshFunc();
-    //             closureCache.put(func, frame.addFuncDecl(newFunc, argSorts, Sort.Bool()));
-    //             frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkIff(Term.mkApp(newFunc, vars), t)));
-    //             t = getClosureTerm(newFunc, vars.subList(0, bve.boundVars.size()), tmpVars, tmpVar.of(sorts.get(0)));
-    //         }
-    //     }
-    //     List<Var> finalArgs = new ArrayList<>();
-    //     for (ExprVar bv : bve.boundVars) {
-    //         env.remove(bv);
-    //         finalArgs.add((Var) cterm(bv));
-    //     }
-    //     t = getClosureTerm(closureCache.get(func).name(), finalArgs, envVars.get(e), tmpVar.of(sorts.get(0)));
-    //     return c ? t : Term.mkOr(t, Term.mkEq(envVars.get(e).get(0),envVars.get(e).get(1)));
-    // }
+    private Term iterativeClosure(Expr e, boolean c) {
+        BoundVariableEliminator bve = new BoundVariableEliminator(e);
+        List<Var> tmpVars = getVars(e.type().arity());
+        Var tmpVar = tc.getFreshVar();
+        envVars.put(e, List.of(tmpVars.get(0), tmpVar));
+        Term t = cterm(e);
+        envVars.remove(e);
+        String func;
+        if (t instanceof App)
+            func = ((App) t).getFunctionName();
+        else
+            throw new RuntimeException("Not implemented yet!");
+        List<Sort> sorts = getSorts(e);
+        if (!closureCache.containsKey(func)) {
+            List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
+            List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
+            for (ExprVar bv : bve.boundVars) {
+                argSorts.add(getSorts(bv).get(0));
+                vars.add(env.get(bv));
+            }
+            argSorts.addAll(sorts);
+            vars.addAll(tmpVars);
+            envVars.put(e, List.of(tmpVar, tmpVars.get(1)));
+            t = Term.mkAnd(t, cterm(e));
+            envVars.remove(e);
+            envVars.put(e, tmpVars);
+            t = Term.mkOr(cterm(e), Term.mkExists(tmpVar.of(sorts.get(0)), t));
+            envVars.remove(e);
+            String newFunc = func;
+            for (int i = 1; i < Math.ceil(Math.log(frame.getScope(sorts.get(0))))/Math.log(2); i++) {
+                newFunc = getFreshFunc();
+                closureCache.put(func, frame.addFuncDecl(newFunc, argSorts, Sort.Bool()));
+                frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkIff(Term.mkApp(newFunc, vars), t)));
+                t = getClosureTerm(newFunc, vars.subList(0, bve.boundVars.size()), tmpVars, tmpVar.of(sorts.get(0)));
+            }
+        }
+        List<Var> finalArgs = new ArrayList<>();
+        for (ExprVar bv : bve.boundVars) {
+            env.remove(bv);
+            finalArgs.add((Var) cterm(bv));
+        }
+        t = getClosureTerm(closureCache.get(func).name(), finalArgs, envVars.get(e), tmpVar.of(sorts.get(0)));
+        return c ? t : Term.mkOr(t, Term.mkEq(envVars.get(e).get(0),envVars.get(e).get(1)));
+    }
 
     private List<Term> getList(List<Var> vars, Term v1, Term v2) {
         List<Term> res = new ArrayList<>(vars);
@@ -793,206 +808,207 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     }
 
     // Approach 2: Claessen
-    // private Term closure(Expr e, boolean c) {
-    //     BoundVariableEliminator bve = new BoundVariableEliminator(e);
-    //     List<Var> tmpVars = getVars(e.type().arity());
-    //     Var tmpVar = tc.getFreshVar();
-    //     envVars.put(e, tmpVars);
-    //     Term t = cterm(e);
-    //     envVars.remove(e);
-    //     String func;
-    //     if (t instanceof App)
-    //         func = ((App) t).getFunctionName();
-    //     else
-    //         throw new RuntimeException("Not implemented yet!");
-    //     Sort sort = getSorts(e).get(0);
-    //     if (!closureCache.containsKey(func)) {
-    //         List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-    //         List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-    //         for (ExprVar bv : bve.boundVars) {
-    //             argSorts.add(getSorts(bv).get(0));
-    //             vars.add(env.get(bv));
-    //         }
-    //         String starR = getFreshFunc(), aux1 = getFreshFunc(), aux2 = getFreshFunc();
-    //         List<Var> boundVars = new ArrayList<>(vars);
-    //         argSorts.add(sort);
-    //         vars.add(tmpVars.get(0));
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkApp(starR, getList(boundVars, tmpVars.get(0), tmpVars.get(0))))); // I1
-    //         argSorts.add(sort);
-    //         vars.add(tmpVars.get(1));
-    //         closureCache.put(func, frame.addFuncDecl(starR, argSorts, Sort.Bool()));
-    //         frame.addFuncDecl(aux2, argSorts, sort);
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkNot(Term.mkApp(aux1, getList(boundVars, tmpVars.get(0), tmpVars.get(0), tmpVars.get(1)))))); // C1
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(t, Term.mkApp(starR, vars)))); // I2
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, vars), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(func, getList(boundVars, tmpVars.get(0), Term.mkApp(aux2, vars)))))); // E1
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, vars), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(starR, getList(boundVars, Term.mkApp(aux2, vars), tmpVars.get(1)))))); // E2
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, vars), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(aux1, getList(boundVars, tmpVars.get(0), Term.mkApp(aux2, vars), tmpVars.get(1)))))); // E3
-    //         argSorts.add(sort);
-    //         vars.add(tmpVar);
-    //         frame.addFuncDecl(aux1, argSorts, Sort.Bool());
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, getList(boundVars, tmpVars.get(0), tmpVars.get(1))), Term.mkApp(starR, getList(boundVars, tmpVars.get(1), tmpVar))), Term.mkApp(starR, getList(boundVars, tmpVars.get(0), tmpVar))))); // I3
-    //         argSorts.add(sort);
-    //         Var tmpVar1 = tc.getFreshVar();
-    //         vars.add(tmpVar1);
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(aux1, getList(boundVars, tmpVars.get(0), tmpVars.get(1), tmpVar1)), Term.mkApp(aux1, getList(boundVars, tmpVars.get(1), tmpVar, tmpVar1))), Term.mkApp(aux1, getList(boundVars, tmpVars.get(0), tmpVar, tmpVar1))))); // C2
-    //     }
-    //     List<Var> finalArgs = new ArrayList<>();
-    //     for (ExprVar bv : bve.boundVars) {
-    //         env.remove(bv);
-    //         finalArgs.add((Var) cterm(bv));
-    //     }
-    //     if (!c)
-    //         return Term.mkApp(closureCache.get(func).name(), getList(finalArgs, envVars.get(e).get(0), envVars.get(e).get(1)));
-    //     envVars.put(e, List.of(envVars.get(e).get(0), tmpVar));
-    //     t = cterm(e);
-    //     envVars.remove(e);
-    //     return Term.mkExists(tmpVar.of(sort), Term.mkAnd(t, Term.mkApp(closureCache.get(func).name(), getList(finalArgs, tmpVar, envVars.get(e).get(1)))));
-    // }
+    private Term claessenClosure(Expr e, boolean c) {
+        BoundVariableEliminator bve = new BoundVariableEliminator(e);
+        List<Var> tmpVars = getVars(e.type().arity());
+        Var tmpVar = tc.getFreshVar();
+        envVars.put(e, tmpVars);
+        Term t = cterm(e);
+        envVars.remove(e);
+        String func;
+        if (t instanceof App)
+            func = ((App) t).getFunctionName();
+        else
+            throw new RuntimeException("Not implemented yet!");
+        Sort sort = getSorts(e).get(0);
+        if (!closureCache.containsKey(func)) {
+            List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
+            List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
+            for (ExprVar bv : bve.boundVars) {
+                argSorts.add(getSorts(bv).get(0));
+                vars.add(env.get(bv));
+            }
+            String starR = getFreshFunc(), aux1 = getFreshFunc(), aux2 = getFreshFunc();
+            List<Var> boundVars = new ArrayList<>(vars);
+            argSorts.add(sort);
+            vars.add(tmpVars.get(0));
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkApp(starR, getList(boundVars, tmpVars.get(0), tmpVars.get(0))))); // I1
+            argSorts.add(sort);
+            vars.add(tmpVars.get(1));
+            closureCache.put(func, frame.addFuncDecl(starR, argSorts, Sort.Bool()));
+            frame.addFuncDecl(aux2, argSorts, sort);
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkNot(Term.mkApp(aux1, getList(boundVars, tmpVars.get(0), tmpVars.get(0), tmpVars.get(1)))))); // C1
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(t, Term.mkApp(starR, vars)))); // I2
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, vars), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(func, getList(boundVars, tmpVars.get(0), Term.mkApp(aux2, vars)))))); // E1
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, vars), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(starR, getList(boundVars, Term.mkApp(aux2, vars), tmpVars.get(1)))))); // E2
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, vars), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(aux1, getList(boundVars, tmpVars.get(0), Term.mkApp(aux2, vars), tmpVars.get(1)))))); // E3
+            argSorts.add(sort);
+            vars.add(tmpVar);
+            frame.addFuncDecl(aux1, argSorts, Sort.Bool());
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, getList(boundVars, tmpVars.get(0), tmpVars.get(1))), Term.mkApp(starR, getList(boundVars, tmpVars.get(1), tmpVar))), Term.mkApp(starR, getList(boundVars, tmpVars.get(0), tmpVar))))); // I3
+            argSorts.add(sort);
+            Var tmpVar1 = tc.getFreshVar();
+            vars.add(tmpVar1);
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(aux1, getList(boundVars, tmpVars.get(0), tmpVars.get(1), tmpVar1)), Term.mkApp(aux1, getList(boundVars, tmpVars.get(1), tmpVar, tmpVar1))), Term.mkApp(aux1, getList(boundVars, tmpVars.get(0), tmpVar, tmpVar1))))); // C2
+        }
+        List<Var> finalArgs = new ArrayList<>();
+        for (ExprVar bv : bve.boundVars) {
+            env.remove(bv);
+            finalArgs.add((Var) cterm(bv));
+        }
+        if (!c)
+            return Term.mkApp(closureCache.get(func).name(), getList(finalArgs, envVars.get(e).get(0), envVars.get(e).get(1)));
+        envVars.put(e, List.of(envVars.get(e).get(0), tmpVar));
+        t = cterm(e);
+        envVars.remove(e);
+        return Term.mkExists(tmpVar.of(sort), Term.mkAnd(t, Term.mkApp(closureCache.get(func).name(), getList(finalArgs, tmpVar, envVars.get(e).get(1)))));
+    }
 
     // Approach 3: Ejick
-    // private Term closure(Expr e, boolean c) {
-    //     BoundVariableEliminator bve = new BoundVariableEliminator(e);
-    //     List<Var> tmpVars = getVars(e.type().arity());
-    //     Var tmpVar = tc.getFreshVar();
-    //     envVars.put(e, tmpVars);
-    //     Term t = cterm(e);
-    //     envVars.remove(e);
-    //     String func;
-    //     if (t instanceof App)
-    //         func = ((App) t).getFunctionName();
-    //     else
-    //         throw new RuntimeException("Not implemented yet!");
-    //     Sort sort = getSorts(e).get(0);
-    //     if (!closureCache.containsKey(func)) {
-    //         List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-    //         List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-    //         for (ExprVar bv : bve.boundVars) {
-    //             argSorts.add(getSorts(bv).get(0));
-    //             vars.add(env.get(bv));
-    //         }
-    //         String aux = getFreshFunc();
-    //         List<Var> boundVars = new ArrayList<>(vars);
-    //         argSorts.add(sort);
-    //         argSorts.add(sort);
-    //         vars.addAll(tmpVars);
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkNot(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(0), tmpVars.get(1)))))); // C1
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(t, Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(1), tmpVars.get(1)))))); // C4
-    //         vars.set(vars.size()-1, tmpVar);
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVar, tmpVar)), Term.mkExists(tmpVars.get(1).of(sort), Term.mkAnd(t, Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(1), tmpVar))))))); // C5
-    //         vars.set(vars.size()-1, tmpVars.get(1));
-    //         argSorts.add(sort);
-    //         vars.add(tmpVar);
-    //         closureCache.put(func, frame.addFuncDecl(aux, argSorts, Sort.Bool()));
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(aux, vars), Term.mkNot(Term.mkEq(tmpVars.get(1), tmpVar))), Term.mkApp(aux, getList(boundVars, tmpVars.get(1), tmpVar, tmpVar))))); // C6
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(1), tmpVars.get(1))), Term.mkAnd(Term.mkApp(aux, getList(boundVars, tmpVars.get(1), tmpVar, tmpVar)), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVar)))), Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVar, tmpVar))))); // C3
-    //         argSorts.add(sort);
-    //         Var tmpVar1 = tc.getFreshVar();
-    //         vars.add(tmpVar1);
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(1), tmpVar1)), Term.mkApp(aux, getList(boundVars, tmpVars.get(1), tmpVar, tmpVar1))), Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVar, tmpVar1))))); // C2
-    //     }
-    //     List<Var> finalArgs = new ArrayList<>();
-    //     for (ExprVar bv : bve.boundVars) {
-    //         env.remove(bv);
-    //         finalArgs.add((Var) cterm(bv));
-    //     }
-    //     if (!c)
-    //         return Term.mkOr(Term.mkApp(closureCache.get(func).name(), getList(finalArgs, envVars.get(e).get(0), envVars.get(e).get(1), envVars.get(e).get(1))), Term.mkEq(envVars.get(e).get(0), envVars.get(e).get(1)));
-    //     envVars.put(e, List.of(envVars.get(e).get(0), tmpVar));
-    //     t = cterm(e);
-    //     envVars.remove(e);
-    //     return Term.mkExists(tmpVar.of(sort), Term.mkAnd(t, Term.mkOr(Term.mkApp(closureCache.get(func).name(), getList(finalArgs, tmpVar, envVars.get(e).get(1), envVars.get(e).get(1))), Term.mkEq(tmpVar, envVars.get(e).get(1)))));
-    // }
+    private Term ejickClosure(Expr e, boolean c) {
+        BoundVariableEliminator bve = new BoundVariableEliminator(e);
+        List<Var> tmpVars = getVars(e.type().arity());
+        Var tmpVar = tc.getFreshVar();
+        envVars.put(e, tmpVars);
+        Term t = cterm(e);
+        envVars.remove(e);
+        String func;
+        if (t instanceof App)
+            func = ((App) t).getFunctionName();
+        else
+            throw new RuntimeException("Not implemented yet!");
+        Sort sort = getSorts(e).get(0);
+        if (!closureCache.containsKey(func)) {
+            List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
+            List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
+            for (ExprVar bv : bve.boundVars) {
+                argSorts.add(getSorts(bv).get(0));
+                vars.add(env.get(bv));
+            }
+            String aux = getFreshFunc();
+            List<Var> boundVars = new ArrayList<>(vars);
+            argSorts.add(sort);
+            argSorts.add(sort);
+            vars.addAll(tmpVars);
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkNot(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(0), tmpVars.get(1)))))); // C1
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(t, Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(1), tmpVars.get(1)))))); // C4
+            vars.set(vars.size()-1, tmpVar);
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVar, tmpVar)), Term.mkExists(tmpVars.get(1).of(sort), Term.mkAnd(t, Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(1), tmpVar))))))); // C5
+            vars.set(vars.size()-1, tmpVars.get(1));
+            argSorts.add(sort);
+            vars.add(tmpVar);
+            closureCache.put(func, frame.addFuncDecl(aux, argSorts, Sort.Bool()));
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(aux, vars), Term.mkNot(Term.mkEq(tmpVars.get(1), tmpVar))), Term.mkApp(aux, getList(boundVars, tmpVars.get(1), tmpVar, tmpVar))))); // C6
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(1), tmpVars.get(1))), Term.mkAnd(Term.mkApp(aux, getList(boundVars, tmpVars.get(1), tmpVar, tmpVar)), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVar)))), Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVar, tmpVar))))); // C3
+            argSorts.add(sort);
+            Var tmpVar1 = tc.getFreshVar();
+            vars.add(tmpVar1);
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(1), tmpVar1)), Term.mkApp(aux, getList(boundVars, tmpVars.get(1), tmpVar, tmpVar1))), Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVar, tmpVar1))))); // C2
+        }
+        List<Var> finalArgs = new ArrayList<>();
+        for (ExprVar bv : bve.boundVars) {
+            env.remove(bv);
+            finalArgs.add((Var) cterm(bv));
+        }
+        if (!c)
+            return Term.mkOr(Term.mkApp(closureCache.get(func).name(), getList(finalArgs, envVars.get(e).get(0), envVars.get(e).get(1), envVars.get(e).get(1))), Term.mkEq(envVars.get(e).get(0), envVars.get(e).get(1)));
+        envVars.put(e, List.of(envVars.get(e).get(0), tmpVar));
+        t = cterm(e);
+        envVars.remove(e);
+        return Term.mkExists(tmpVar.of(sort), Term.mkAnd(t, Term.mkOr(Term.mkApp(closureCache.get(func).name(), getList(finalArgs, tmpVar, envVars.get(e).get(1), envVars.get(e).get(1))), Term.mkEq(tmpVar, envVars.get(e).get(1)))));
+    }
 
     // Approach 4: Liu
-    // private Term closure(Expr e, boolean c) {
-    //     BoundVariableEliminator bve = new BoundVariableEliminator(e);
-    //     List<Var> tmpVars = getVars(e.type().arity());
-    //     Var tmpVar = tc.getFreshVar();
-    //     envVars.put(e, tmpVars);
-    //     Term t = cterm(e);
-    //     envVars.remove(e);
-    //     String func;
-    //     if (t instanceof App)
-    //         func = ((App) t).getFunctionName();
-    //     else
-    //         throw new RuntimeException("Not implemented yet!");
-    //     Sort sort = getSorts(e).get(0);
-    //     if (!closureCache.containsKey(func)) {
-    //         List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-    //         List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-    //         for (ExprVar bv : bve.boundVars) {
-    //             argSorts.add(getSorts(bv).get(0));
-    //             vars.add(env.get(bv));
-    //         }
-    //         String aux = getFreshFunc();
-    //         List<Var> boundVars = new ArrayList<>(vars);
-    //         argSorts.add(sort);
-    //         argSorts.add(sort);
-    //         vars.addAll(tmpVars);
-    //         closureCache.put(func, frame.addFuncDecl(aux, argSorts, Sort.Int()));
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkIff(t, Term.mkEq(Term.mkApp(aux, vars), new IntegerLiteral(1)))));
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkGT(Term.mkApp(aux, vars), new IntegerLiteral(1)), Term.mkExists(tmpVar.of(sort), Term.mkAnd(Term.mkEq(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVar)), new IntegerLiteral(1)), Term.mkEq(Term.mkApp(aux, vars), Term.mkPlus(Term.mkApp(aux, getList(boundVars, tmpVar, tmpVars.get(1))), new IntegerLiteral(1))))))));
-    //         vars.add(tmpVar);
-    //         argSorts.add(sort);
-    //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkGT(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(1))), new IntegerLiteral(0)), Term.mkGT(Term.mkApp(aux, getList(boundVars, tmpVars.get(1), tmpVar)), new IntegerLiteral(0))), Term.mkGT(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVar)), new IntegerLiteral(0)))));
-    //     }
-    //     List<Var> finalArgs = new ArrayList<>();
-    //     for (ExprVar bv : bve.boundVars) {
-    //         env.remove(bv);
-    //         finalArgs.add((Var) cterm(bv));
-    //     }
-    //     finalArgs.addAll(envVars.get(e));
-    //     t = Term.mkGT(Term.mkApp(closureCache.get(func).name(), finalArgs), new IntegerLiteral(0));
-    //     return c ? t : Term.mkOr(t, Term.mkEq(envVars.get(e).get(0), envVars.get(e).get(1)));
-    // }
+    private Term liuClosure(Expr e, boolean c) {
+        BoundVariableEliminator bve = new BoundVariableEliminator(e);
+        List<Var> tmpVars = getVars(e.type().arity());
+        Var tmpVar = tc.getFreshVar();
+        envVars.put(e, tmpVars);
+        Term t = cterm(e);
+        envVars.remove(e);
+        String func;
+        if (t instanceof App)
+            func = ((App) t).getFunctionName();
+        else
+            throw new RuntimeException("Not implemented yet!");
+        Sort sort = getSorts(e).get(0);
+        if (!closureCache.containsKey(func)) {
+            List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
+            List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
+            for (ExprVar bv : bve.boundVars) {
+                argSorts.add(getSorts(bv).get(0));
+                vars.add(env.get(bv));
+            }
+            String aux = getFreshFunc();
+            List<Var> boundVars = new ArrayList<>(vars);
+            argSorts.add(sort);
+            argSorts.add(sort);
+            vars.addAll(tmpVars);
+            closureCache.put(func, frame.addFuncDecl(aux, argSorts, Sort.Int()));
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkIff(t, Term.mkEq(Term.mkApp(aux, vars), new IntegerLiteral(1)))));
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkGT(Term.mkApp(aux, vars), new IntegerLiteral(1)), Term.mkExists(tmpVar.of(sort), Term.mkAnd(Term.mkEq(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVar)), new IntegerLiteral(1)), Term.mkEq(Term.mkApp(aux, vars), Term.mkPlus(Term.mkApp(aux, getList(boundVars, tmpVar, tmpVars.get(1))), new IntegerLiteral(1))))))));
+            vars.add(tmpVar);
+            argSorts.add(sort);
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkGT(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVars.get(1))), new IntegerLiteral(0)), Term.mkGT(Term.mkApp(aux, getList(boundVars, tmpVars.get(1), tmpVar)), new IntegerLiteral(0))), Term.mkGT(Term.mkApp(aux, getList(boundVars, tmpVars.get(0), tmpVar)), new IntegerLiteral(0)))));
+        }
+        List<Var> finalArgs = new ArrayList<>();
+        for (ExprVar bv : bve.boundVars) {
+            env.remove(bv);
+            finalArgs.add((Var) cterm(bv));
+        }
+        finalArgs.addAll(envVars.get(e));
+        t = Term.mkGT(Term.mkApp(closureCache.get(func).name(), finalArgs), new IntegerLiteral(0));
+        return c ? t : Term.mkOr(t, Term.mkEq(envVars.get(e).get(0), envVars.get(e).get(1)));
+    }
 
     // Using Closure in Fortress
-    // private Term closure(ExprUnary x, boolean c) {
-    //     Term t = cterm(x.sub);
+    // private Term closure(Expr e, boolean c) {
+    //     Term t = cterm(e);
     //     if (!(t instanceof App)) {
-    //         BoundVariableEliminator bve = new BoundVariableEliminator(x.sub);
+    //         BoundVariableEliminator bve = new BoundVariableEliminator(e);
     //         List<Term> args = new ArrayList<>(bve.boundVars.size()+2);
-    //         if (!cache.has(x.sub)) {
+    //         if (!cache.containsKey(e)) {
     //             List<Var> vars = new ArrayList<>(bve.boundVars.size()+2);
     //             List<Sort> sorts = new ArrayList<>(bve.boundVars.size()+2);
-    //             envVars.put(x.sub, getVars(2));
-    //             t = cterm(x.sub);
+    //             envVars.put(e, getVars(2));
+    //             t = cterm(e);
     //             for (ExprVar bv : bve.boundVars) {
     //                 sorts.add(getSorts(bv).get(0));
     //                 vars.add(env.get(bv));
     //             }
-    //             vars.addAll(envVars.get(x.sub));
-    //             sorts.addAll(getSorts(x.sub));
-    //             envVars.remove(x.sub);
+    //             vars.addAll(envVars.get(e));
+    //             sorts.addAll(getSorts(e));
+    //             envVars.remove(e);
     //             String funcName = getFreshFunc();
-    //             cache.put(x.sub, frame.addFuncDecl(funcName, sorts, Sort.Bool()));
+    //             cache.put(e, frame.addFuncDecl(funcName, sorts, Sort.Bool()));
     //             frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkEq(Term.mkApp(funcName, vars), t)));
     //         }
     //         for (ExprVar bv : bve.boundVars) {
     //             env.remove(bv);
     //             args.add(env.get(bv));
     //         }
-    //         args.addAll(envVars.get(x.sub));
-    //         t = Term.mkApp(cache.get(x.sub).name(), args);
+    //         args.addAll(envVars.get(e));
+    //         t = Term.mkApp(cache.get(e).name(), args);
     //     }
     //     // look at order of variables in app and compare to envvars, if not introduce new function and add axiom, change t to new app
-    //     envVars.remove(x.sub);
     //     App app = (App) t;
     //     List<Term> args = new ArrayList<>(app.getArguments());
-    //     int idx1 = args.indexOf(envVars.get(x).get(0));
-    //     int idx2 ;= args.indexOf(envVars.get(x).get(1));
+    //     int idx1 = args.indexOf(envVars.get(e).get(0));
+    //     int idx2 = args.indexOf(envVars.get(e).get(1));
     //     if (idx1 > idx2) {
-    //         args.set(idx1, envVars.get(x).get(1));
-    //         args.set(idx2, envVars.get(x).get(0));
+    //         args.set(idx1, envVars.get(e).get(1));
+    //         args.set(idx2, envVars.get(e).get(0));
     //         List<Sort> sorts = new ArrayList<>();
     //         for (Sort s : JavaConverters.asJavaIterable(frame.getFuncDecl(app.getFunctionName()).argSorts()))
     //             sorts.add(s);
-    //         cache.put(x.sub, frame.addFuncDecl(getFreshFunc(), sorts, Sort.Bool()));
+    //         cache.put(e, frame.addFuncDecl(getFreshFunc(), sorts, Sort.Bool()));
     //         List<Var> vars = args.stream().map(a -> (Var) a).collect(Collectors.toList());
-    //         app = (App) Term.mkApp(cache.get(x.sub).name(), args);
+    //         app = (App) Term.mkApp(cache.get(e).name(), args);
     //         frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, sorts), Term.mkEq(app, t)));
     //     }
-    //     return c ? Term.mkClosure(app, envVars.get(x).get(0), envVars.get(x).get(1)) : Term.mkReflexiveClosure(app, envVars.get(x).get(0), envVars.get(x).get(1));    
+    //     t = c ? Term.mkClosure(app, envVars.get(e).get(0), envVars.get(e).get(1)) : Term.mkReflexiveClosure(app, envVars.get(e).get(0), envVars.get(e).get(1));
+    //     envVars.remove(e);
+    //     return t;    
     // }
 
     /* ============================ */
@@ -1047,6 +1063,8 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
     /** {@inheritDoc} */
     @Override
     public Object visit(Sig x) throws Err {
+        if (x == Sig.NONE)
+            return Term.mkBottom();
         if (frame.a2s(x) != null)
             return Term.mkTop();
         FuncDecl func = frame.a2f(x);
