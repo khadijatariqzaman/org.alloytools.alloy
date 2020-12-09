@@ -670,30 +670,28 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             func = ((App) t).getFunctionName();
         else
             throw new RuntimeException("Not implemented yet!");
-        List<Sort> sorts = getSorts(e);
+        App app = (App) t;
+        List<Sort> argSorts = JavaConverters.seqAsJavaList(frame.getFuncDecl(func).argSorts());
         List<List<Term>> domainValues = new ArrayList<>();
+        List<Var> vars = app.getArguments().stream().map(x -> (Var) x).collect(Collectors.toList());
         if (!cardinCache.containsKey(func)) {
-            List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-            List<Var> vars = new ArrayList<>(e.type().arity()+bve.boundVars.size());
-            for (ExprVar bv : bve.boundVars) {
-                argSorts.add(getSorts(bv).get(0));
-                vars.add(env.get(bv));
-            }
-            vars.addAll(tmpVars);
-            argSorts.addAll(sorts);
             String funcName = getFreshFunc();
             cardinCache.put(func, frame.addFuncDecl(funcName, argSorts, Sort.Int()));
             frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkOr(Term.mkAnd(Term.mkEq(Term.mkApp(funcName, vars), new IntegerLiteral(1)), t), Term.mkAnd(Term.mkEq(Term.mkApp(funcName, vars), new IntegerLiteral(0)), Term.mkNot(t)))));
         }
+        Map<Var, ExprVar> varMapping = new HashMap<>();
         for (ExprVar bv : bve.boundVars) {
+            varMapping.put(env.get(bv), bv);
             env.remove(bv);
-            domainValues.add(List.of(cterm(bv)));
         }
-        for (Sort s : sorts) {
-            List<Term> domainVal = new ArrayList<>();
-            for (int j = 0; j < frame.getScope(s); j++)
-                domainVal.add(Term.mkDomainElement(j+1, s));
-            domainValues.add(domainVal);
+        for (int i = 0; i < argSorts.size(); i++) {
+            if (tmpVars.contains(vars.get(i))) {
+                List<Term> domainVal = new ArrayList<>();
+                for (int j = 0; j < frame.getScope(argSorts.get(i)); j++)
+                    domainVal.add(Term.mkDomainElement(j+1, argSorts.get(i)));
+                domainValues.add(domainVal);
+            } else
+                domainValues.add(List.of(env.get(varMapping.get(vars.get(i)))));
         }
         List<List<Term>> appValues = getCartesianProduct(domainValues);
         Term term = Term.mkApp(cardinCache.get(func).name(), appValues.get(0));
