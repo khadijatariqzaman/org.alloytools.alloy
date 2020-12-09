@@ -67,6 +67,7 @@ import fortress.msfol.ReflexiveClosure;
 import fortress.msfol.Sort;
 import fortress.msfol.Term;
 import fortress.msfol.Var;
+import fortress.operations.TermOps;
 
 /**
  * Translate an Alloy AST into Fortress AST then attempt to solve it using Fortress.
@@ -685,13 +686,14 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             env.remove(bv);
         }
         for (int i = 0; i < argSorts.size(); i++) {
-            if (tmpVars.contains(vars.get(i))) {
+            if (varMapping.containsKey(vars.get(i)))
+                domainValues.add(List.of(env.get(varMapping.get(vars.get(i)))));
+            else {
                 List<Term> domainVal = new ArrayList<>();
                 for (int j = 0; j < frame.getScope(argSorts.get(i)); j++)
                     domainVal.add(Term.mkDomainElement(j+1, argSorts.get(i)));
                 domainValues.add(domainVal);
-            } else
-                domainValues.add(List.of(env.get(varMapping.get(vars.get(i)))));
+            }
         }
         List<List<Term>> appValues = getCartesianProduct(domainValues);
         Term term = Term.mkApp(cardinCache.get(func).name(), appValues.get(0));
@@ -752,11 +754,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         envVars.put(e, List.of(tmpVars.get(0), tmpVar));
         Term t = cterm(e);
         envVars.remove(e);
-        String func;
+        String func = "undefined";
         if (t instanceof App)
             func = ((App) t).getFunctionName();
-        else
-            throw new RuntimeException("Not implemented yet!");
         List<Sort> sorts = getSorts(e);
         if (!closureCache.containsKey(func)) {
             List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
@@ -787,6 +787,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             finalArgs.add((Var) cterm(bv));
         }
         t = getClosureTerm(closureCache.get(func).name(), finalArgs, envVars.get(e), tmpVar.of(sorts.get(0)));
+        closureCache.remove("undefined");
         return c ? t : Term.mkOr(t, Term.mkEq(envVars.get(e).get(0),envVars.get(e).get(1)));
     }
 
@@ -813,11 +814,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         envVars.put(e, tmpVars);
         Term t = cterm(e);
         envVars.remove(e);
-        String func;
+        String func = "undefined";
         if (t instanceof App)
             func = ((App) t).getFunctionName();
-        else
-            throw new RuntimeException("Not implemented yet!");
         Sort sort = getSorts(e).get(0);
         if (!closureCache.containsKey(func)) {
             List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
@@ -837,7 +836,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             frame.addFuncDecl(aux2, argSorts, sort);
             frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkNot(Term.mkApp(aux1, getList(boundVars, tmpVars.get(0), tmpVars.get(0), tmpVars.get(1)))))); // C1
             frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(t, Term.mkApp(starR, vars)))); // I2
-            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, vars), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(func, getList(boundVars, tmpVars.get(0), Term.mkApp(aux2, vars)))))); // E1
+            frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, vars), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), TermOps.wrapTerm(t).substitute(tmpVars.get(1), Term.mkApp(aux2, vars))))); // E1
             frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, vars), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(starR, getList(boundVars, Term.mkApp(aux2, vars), tmpVars.get(1)))))); // E2
             frame.addAxiom(Term.mkForall(getAnnotatedVars(vars, argSorts), Term.mkImp(Term.mkAnd(Term.mkApp(starR, vars), Term.mkNot(Term.mkEq(tmpVars.get(0), tmpVars.get(1)))), Term.mkApp(aux1, getList(boundVars, tmpVars.get(0), Term.mkApp(aux2, vars), tmpVars.get(1)))))); // E3
             argSorts.add(sort);
@@ -854,12 +853,15 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             env.remove(bv);
             finalArgs.add((Var) cterm(bv));
         }
-        if (!c)
-            return Term.mkApp(closureCache.get(func).name(), getList(finalArgs, envVars.get(e).get(0), envVars.get(e).get(1)));
-        envVars.put(e, List.of(envVars.get(e).get(0), tmpVar));
-        t = cterm(e);
-        envVars.remove(e);
-        return Term.mkExists(tmpVar.of(sort), Term.mkAnd(t, Term.mkApp(closureCache.get(func).name(), getList(finalArgs, tmpVar, envVars.get(e).get(1)))));
+        if (!c) {
+            t = Term.mkApp(closureCache.get(func).name(), getList(finalArgs, envVars.get(e).get(0), envVars.get(e).get(1)));
+        } else {
+            envVars.put(e, List.of(envVars.get(e).get(0), tmpVar));
+            t = Term.mkExists(tmpVar.of(sort), Term.mkAnd(cterm(e), Term.mkApp(closureCache.get(func).name(), getList(finalArgs, tmpVar, envVars.get(e).get(1)))));
+            envVars.remove(e);
+        }
+        closureCache.remove("undefined");
+        return t;
     }
 
     // Approach 3: Ejick
@@ -870,11 +872,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         envVars.put(e, tmpVars);
         Term t = cterm(e);
         envVars.remove(e);
-        String func;
+        String func = "undefined";
         if (t instanceof App)
             func = ((App) t).getFunctionName();
-        else
-            throw new RuntimeException("Not implemented yet!");
         Sort sort = getSorts(e).get(0);
         if (!closureCache.containsKey(func)) {
             List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
@@ -908,12 +908,15 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
             env.remove(bv);
             finalArgs.add((Var) cterm(bv));
         }
-        if (!c)
-            return Term.mkOr(Term.mkApp(closureCache.get(func).name(), getList(finalArgs, envVars.get(e).get(0), envVars.get(e).get(1), envVars.get(e).get(1))), Term.mkEq(envVars.get(e).get(0), envVars.get(e).get(1)));
-        envVars.put(e, List.of(envVars.get(e).get(0), tmpVar));
-        t = cterm(e);
-        envVars.remove(e);
-        return Term.mkExists(tmpVar.of(sort), Term.mkAnd(t, Term.mkOr(Term.mkApp(closureCache.get(func).name(), getList(finalArgs, tmpVar, envVars.get(e).get(1), envVars.get(e).get(1))), Term.mkEq(tmpVar, envVars.get(e).get(1)))));
+        if (!c) {
+            t = Term.mkOr(Term.mkApp(closureCache.get(func).name(), getList(finalArgs, envVars.get(e).get(0), envVars.get(e).get(1), envVars.get(e).get(1))), Term.mkEq(envVars.get(e).get(0), envVars.get(e).get(1)));
+        } else {
+            envVars.put(e, List.of(envVars.get(e).get(0), tmpVar));
+            t = Term.mkExists(tmpVar.of(sort), Term.mkAnd(cterm(e), Term.mkOr(Term.mkApp(closureCache.get(func).name(), getList(finalArgs, tmpVar, envVars.get(e).get(1), envVars.get(e).get(1))), Term.mkEq(tmpVar, envVars.get(e).get(1)))));
+            envVars.remove(e);
+        }
+        closureCache.remove("undefined");
+        return t;
     }
 
     // Approach 4: Liu
@@ -924,11 +927,9 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         envVars.put(e, tmpVars);
         Term t = cterm(e);
         envVars.remove(e);
-        String func;
+        String func = "undefined";
         if (t instanceof App)
             func = ((App) t).getFunctionName();
-        else
-            throw new RuntimeException("Not implemented yet!");
         Sort sort = getSorts(e).get(0);
         if (!closureCache.containsKey(func)) {
             List<Sort> argSorts = new ArrayList<>(e.type().arity()+bve.boundVars.size());
@@ -956,6 +957,7 @@ public final class TranslateAlloyToFortress extends VisitReturn<Object> {
         }
         finalArgs.addAll(envVars.get(e));
         t = Term.mkGT(Term.mkApp(closureCache.get(func).name(), finalArgs), new IntegerLiteral(0));
+        closureCache.remove("undefined");
         return c ? t : Term.mkOr(t, Term.mkEq(envVars.get(e).get(0), envVars.get(e).get(1)));
     }
 
