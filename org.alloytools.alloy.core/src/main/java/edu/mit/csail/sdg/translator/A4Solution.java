@@ -943,6 +943,8 @@ public final class A4Solution {
     }
 
     Sort a2s(Sig sig) {
+        if (sig == SIGINT)
+            return Sort.Int();
         return a2s.get(sig);
     }
 
@@ -1013,7 +1015,7 @@ public final class A4Solution {
         final TupleFactory f = bounds.universe().factory();
         Map<String, List<Tuple>> values = new HashMap<>();
         for (FuncDecl func : interp.functionInterpretationsJava().keySet()) {
-            if (func.name().charAt(0) == '*')
+            if (func.name().startsWith("func"))
                 continue;
             List<Tuple> value = new ArrayList<>();
             if (func.resultSort().equals(Sort.Bool())) {
